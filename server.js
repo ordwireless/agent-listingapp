@@ -31,6 +31,7 @@ function summarizeProperty(property) {
 
   let missingCount = 0;
   let nextDate = null;
+  let priceValue = null;
   const today = todayISO();
 
   template.forEach((cat) => {
@@ -44,6 +45,9 @@ function summarizeProperty(property) {
           nextDate = val;
         }
       }
+      if (field.key === 'price' && val) {
+        priceValue = val;
+      }
     });
   });
 
@@ -51,7 +55,7 @@ function summarizeProperty(property) {
     id: property.id,
     address: property.address,
     status: property.status,
-    list_price: property.list_price,
+    list_price: priceValue,
     archived: !!property.archived,
     missing_count: missingCount,
     next_date: nextDate
