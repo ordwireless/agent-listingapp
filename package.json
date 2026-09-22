@@ -1,0 +1,17 @@
+{
+  "name": "agent-listingapp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal quick-reference tool for a real estate listing agent",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.19.2"
+  }
+}
