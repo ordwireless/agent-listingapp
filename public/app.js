@@ -340,6 +340,7 @@ function renderCategory(cat, values, propertyId) {
       </button>
       <div class="category-body" style="${isCollapsed ? 'display:none' : ''}">
         ${rows}
+        <button type="button" class="add-field-btn" data-add-field-cat="${cat.id}">+ Add field</button>
       </div>
     </div>
   `;
@@ -356,7 +357,7 @@ function renderFieldRow(field, rawValue, propertyId) {
     const inputType = field.field_type === 'date' ? 'date' : 'text';
     return `
       <div class="field-row">
-        <span class="field-label">${escapeHtml(field.label)}</span>
+        <button type="button" class="field-label-btn" data-rename-field="${field.id}" data-current-label="${escapeHtml(field.label)}">${escapeHtml(field.label)}</button>
         <button type="button" class="field-value ${emptyClass}" data-field-id="${field.id}" data-field-type="${inputType}" data-raw-value="${escapeHtml(value)}">${display}</button>
       </div>
     `;
@@ -399,6 +400,53 @@ function wireCategoryToggles(propertyId) {
       rerenderPropertyPreservingScroll(propertyId);
     });
   });
+
+  app.querySelectorAll('[data-rename-field]').forEach((btn) => {
+    btn.addEventListener('click', () => renameField(btn, propertyId));
+  });
+
+  app.querySelectorAll('[data-add-field-cat]').forEach((btn) => {
+    btn.addEventListener('click', () => addFieldPrompt(btn.dataset.addFieldCat, propertyId));
+  });
+}
+
+async function renameField(btn, propertyId) {
+  const fieldId = btn.dataset.renameField;
+  const current = btn.dataset.currentLabel || '';
+  const next = window.prompt('Rename this field:', current);
+  if (!next || !next.trim() || next.trim() === current) return;
+  try {
+    await fetchJSON(`/api/fields/${fieldId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: next.trim() })
+    });
+  } catch (err) {
+    window.alert('Could not rename field: ' + err.message);
+  }
+  rerenderPropertyPreservingScroll(propertyId);
+}
+
+async function addFieldPrompt(categoryId, propertyId) {
+  const label = window.prompt('New field name:');
+  if (!label || !label.trim()) return;
+  const forAll = window.confirm(
+    'Add to ALL properties (this property\'s shared checklist)?\n\nOK = all properties\nCancel = this property only'
+  );
+  try {
+    await fetchJSON(`/api/categories/${categoryId}/fields`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        label: label.trim(),
+        scope: forAll ? 'all' : 'property',
+        property_id: propertyId
+      })
+    });
+  } catch (err) {
+    window.alert('Could not add field: ' + err.message);
+  }
+  rerenderPropertyPreservingScroll(propertyId);
 }
 
 function wireFieldEditing(propertyId) {

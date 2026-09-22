@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS fields (
   label TEXT NOT NULL,
   field_type TEXT NOT NULL DEFAULT 'text',
   important INTEGER NOT NULL DEFAULT 0,
+  property_id INTEGER REFERENCES properties(id),
   sort_order INTEGER NOT NULL,
   UNIQUE(category_id, key)
 );
@@ -52,6 +53,11 @@ const propertyColumns = db.prepare("PRAGMA table_info(properties)").all().map((c
 if (!propertyColumns.includes('updated_at')) {
   db.exec("ALTER TABLE properties ADD COLUMN updated_at TEXT");
   db.exec("UPDATE properties SET updated_at = created_at WHERE updated_at IS NULL");
+}
+
+const fieldColumns = db.prepare("PRAGMA table_info(fields)").all().map((c) => c.name);
+if (!fieldColumns.includes('property_id')) {
+  db.exec("ALTER TABLE fields ADD COLUMN property_id INTEGER REFERENCES properties(id)");
 }
 
 // Seed the master template once, on first run only.

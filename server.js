@@ -8,13 +8,30 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const STATUSES = ['Preparing', 'Active', 'Under Contract', 'Closed'];
 
-function getTemplate() {
+function getTemplate(propertyId) {
   const categories = db.prepare('SELECT * FROM categories ORDER BY sort_order').all();
-  const fields = db.prepare('SELECT * FROM fields ORDER BY sort_order').all();
+  const fields = propertyId
+    ? db.prepare('SELECT * FROM fields WHERE property_id IS NULL OR property_id = ? ORDER BY sort_order').all(propertyId)
+    : db.prepare('SELECT * FROM fields WHERE property_id IS NULL ORDER BY sort_order').all();
   return categories.map((cat) => ({
     ...cat,
     fields: fields.filter((f) => f.category_id === cat.id)
   }));
+}
+
+function slugify(label) {
+  return label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'field';
+}
+
+function uniqueFieldKey(categoryId, baseKey) {
+  const exists = (k) => !!db.prepare('SELECT 1 FROM fields WHERE category_id = ? AND key = ?').get(categoryId, k);
+  let key = baseKey;
+  let n = 2;
+  while (exists(key)) {
+    key = `${baseKey}_${n}`;
+    n += 1;
+  }
+  return key;
 }
 
 function todayISO() {
@@ -22,7 +39,7 @@ function todayISO() {
 }
 
 function summarizeProperty(property) {
-  const template = getTemplate();
+  const template = getTemplate(property.id);
   const values = db
     .prepare('SELECT field_id, value FROM property_field_values WHERE property_id = ?')
     .all(property.id);
@@ -110,7 +127,7 @@ app.get('/api/properties/:id', (req, res) => {
   const property = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
   if (!property) return res.status(404).json({ error: 'Not found' });
 
-  const template = getTemplate();
+  const template = getTemplate(property.id);
   const values = db
     .prepare('SELECT field_id, value FROM property_field_values WHERE property_id = ?')
     .all(property.id);
@@ -170,6 +187,42 @@ app.put('/api/properties/:id/values/:fieldId', (req, res) => {
   ).run(propertyId, fieldId, value);
   db.prepare("UPDATE properties SET updated_at = datetime('now') WHERE id = ?").run(propertyId);
 
+  res.json({ ok: true });
+});
+
+app.post('/api/categories/:id/fields', (req, res) => {
+  const categoryId = Number(req.params.id);
+  const category = db.prepare('SELECT id FROM categories WHERE id = ?').get(categoryId);
+  if (!category) return res.status(404).json({ error: 'Category not found' });
+
+  const label = (req.body.label || '').trim();
+  if (!label) return res.status(400).json({ error: 'Field name is required' });
+
+  const scope = req.body.scope === 'property' ? 'property' : 'all';
+  const propertyId = scope === 'property' ? Number(req.body.property_id) || null : null;
+  if (scope === 'property' && !propertyId) {
+    return res.status(400).json({ error: 'property_id is required for a property-only field' });
+  }
+
+  const key = uniqueFieldKey(categoryId, slugify(label));
+  const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS m FROM fields WHERE category_id = ?').get(categoryId).m;
+
+  const info = db.prepare(
+    'INSERT INTO fields (category_id, key, label, field_type, important, sort_order, property_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(categoryId, key, label, 'text', 0, maxOrder + 1, propertyId);
+
+  const field = db.prepare('SELECT * FROM fields WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json(field);
+});
+
+app.patch('/api/fields/:id', (req, res) => {
+  const field = db.prepare('SELECT * FROM fields WHERE id = ?').get(req.params.id);
+  if (!field) return res.status(404).json({ error: 'Not found' });
+
+  const label = (req.body.label || '').trim();
+  if (!label) return res.status(400).json({ error: 'Label is required' });
+
+  db.prepare('UPDATE fields SET label = ? WHERE id = ?').run(label, field.id);
   res.json({ ok: true });
 });
 
