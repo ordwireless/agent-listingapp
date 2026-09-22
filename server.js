@@ -1,12 +1,73 @@
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
+const cookieParser = require('cookie-parser');
 const db = require('./db');
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(cookieParser());
 
 const STATUSES = ['Preparing', 'Active', 'Under Contract', 'Closed'];
+
+function sessionToken() {
+  return crypto.createHmac('sha256', process.env.APP_PASSWORD).update('agent-listingapp-session').digest('hex');
+}
+
+function loginPageHtml(error) {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent listing app — sign in</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f6f7f8;font-family:'Inter',-apple-system,sans-serif}
+.card{background:#fff;border:1px solid #eceef1;border-radius:14px;padding:32px;width:100%;max-width:320px;box-shadow:0 1px 2px rgba(20,21,26,0.04)}
+.mark{width:32px;height:32px;border-radius:8px;background:#1d4ed8;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;margin-bottom:16px}
+h1{font-size:17px;font-weight:600;margin:0 0 18px;color:#14151a}
+input{width:100%;box-sizing:border-box;font:inherit;font-size:14px;padding:10px 12px;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:12px}
+button{width:100%;font:inherit;font-size:14px;font-weight:600;padding:10px;border:none;border-radius:8px;background:#1d4ed8;color:#fff;cursor:pointer}
+.err{color:#dc2626;font-size:13px;margin:-6px 0 12px}
+</style>
+</head>
+<body>
+<form class="card" method="POST" action="/login">
+<div class="mark">AL</div>
+<h1>Agent listing app</h1>
+${error ? `<p class="err">${error}</p>` : ''}
+<input type="password" name="password" placeholder="Password" autofocus>
+<button type="submit">Sign in</button>
+</form>
+</body>
+</html>`;
+}
+
+app.get('/login', (req, res) => {
+  res.type('html').send(loginPageHtml());
+});
+
+app.post('/login', express.urlencoded({ extended: false }), (req, res) => {
+  if (!process.env.APP_PASSWORD || req.body.password !== process.env.APP_PASSWORD) {
+    return res.type('html').send(loginPageHtml('Wrong password. Try again.'));
+  }
+  res.cookie('session', sessionToken(), {
+    httpOnly: true,
+    maxAge: 1000 * 60 * 60 * 24 * 90,
+    sameSite: 'lax'
+  });
+  res.redirect('/');
+});
+
+app.use((req, res, next) => {
+  if (!process.env.APP_PASSWORD) return next(); // not configured yet — no gate
+  if (req.cookies && req.cookies.session === sessionToken()) return next();
+  if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Not authenticated' });
+  return res.redirect('/login');
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 function getTemplate(propertyId) {
   const categories = db.prepare('SELECT * FROM categories ORDER BY sort_order').all();
