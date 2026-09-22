@@ -340,6 +340,24 @@ select.status-select {
   color: #14151a;
 }
 
+.delete-btn {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: none;
+  color: #b5b8c0;
+  cursor: pointer;
+}
+
+.delete-btn:hover {
+  color: #dc2626;
+  border-color: #fecaca;
+  background: #fef2f2;
+}
+
 .category {
   border: 1px solid #eceef1;
   border-radius: 14px;

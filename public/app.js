@@ -258,6 +258,7 @@ async function renderPropertyPage(id) {
         <div class="property-controls">
           <select class="status-select" id="status-select">${statusOptions}</select>
           <button class="archive-btn" id="archive-btn">${property.archived ? 'Unarchive' : 'Archive'}</button>
+          <button class="delete-btn" id="delete-btn" aria-label="Delete property">Delete</button>
         </div>
       </div>
       <div id="categories">${categoriesHtml}</div>
@@ -282,6 +283,13 @@ async function renderPropertyPage(id) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ archived: !property.archived })
     });
+    navigate('#/');
+  });
+
+  app.querySelector('#delete-btn').addEventListener('click', async () => {
+    const sure = window.confirm(`Delete "${property.address}" permanently? This cannot be undone.`);
+    if (!sure) return;
+    await fetchJSON(`/api/properties/${property.id}`, { method: 'DELETE' });
     navigate('#/');
   });
 

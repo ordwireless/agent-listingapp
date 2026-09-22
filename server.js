@@ -117,7 +117,7 @@ app.post('/api/properties', (req, res) => {
     return res.status(400).json({ error: 'Address is required' });
   }
   const info = db
-    .prepare('INSERT INTO properties (address, status) VALUES (?, ?)')
+    .prepare("INSERT INTO properties (address, status, updated_at) VALUES (?, ?, datetime('now'))")
     .run(address, 'Preparing');
   const property = db.prepare('SELECT * FROM properties WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json(summarizeProperty(property));
@@ -187,6 +187,15 @@ app.put('/api/properties/:id/values/:fieldId', (req, res) => {
   ).run(propertyId, fieldId, value);
   db.prepare("UPDATE properties SET updated_at = datetime('now') WHERE id = ?").run(propertyId);
 
+  res.json({ ok: true });
+});
+
+app.delete('/api/properties/:id', (req, res) => {
+  const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.id);
+  if (!property) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM property_field_values WHERE property_id = ?').run(property.id);
+  db.prepare('DELETE FROM fields WHERE property_id = ?').run(property.id);
+  db.prepare('DELETE FROM properties WHERE id = ?').run(property.id);
   res.json({ ok: true });
 });
 
