@@ -1,7 +1,9 @@
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const cookieParser = require('cookie-parser');
+const multer = require('multer');
 const db = require('./db');
 
 const app = express();
@@ -9,6 +11,21 @@ app.use(express.json());
 app.use(cookieParser());
 
 const STATUSES = ['Preparing', 'Active', 'Under Contract', 'Closed'];
+const DOC_TYPES = [
+  'Listing Agreement', 'Contract', 'Seller Disclosure', 'Survey',
+  'HOA Documents', 'Restrictive Covenants', 'Septic Permit', 'Inspection', 'Other'
+];
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, db.uploadsDir),
+    filename: (req, file, cb) => {
+      const safeExt = path.extname(file.originalname).slice(0, 10);
+      cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${safeExt}`);
+    }
+  }),
+  limits: { fileSize: 20 * 1024 * 1024 }
+});
 
 function sessionToken() {
   return crypto.createHmac('sha256', process.env.APP_PASSWORD).update('agent-listingapp-session').digest('hex');
@@ -254,6 +271,9 @@ app.put('/api/properties/:id/values/:fieldId', (req, res) => {
 app.delete('/api/properties/:id', (req, res) => {
   const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.id);
   if (!property) return res.status(404).json({ error: 'Not found' });
+  const docs = db.prepare('SELECT stored_name FROM documents WHERE property_id = ?').all(property.id);
+  docs.forEach((d) => fs.unlink(path.join(db.uploadsDir, d.stored_name), () => {}));
+  db.prepare('DELETE FROM documents WHERE property_id = ?').run(property.id);
   db.prepare('DELETE FROM property_field_values WHERE property_id = ?').run(property.id);
   db.prepare('DELETE FROM fields WHERE property_id = ?').run(property.id);
   db.prepare('DELETE FROM properties WHERE id = ?').run(property.id);
@@ -293,6 +313,49 @@ app.patch('/api/fields/:id', (req, res) => {
   if (!label) return res.status(400).json({ error: 'Label is required' });
 
   db.prepare('UPDATE fields SET label = ? WHERE id = ?').run(label, field.id);
+  res.json({ ok: true });
+});
+
+app.get('/api/document-types', (req, res) => {
+  res.json(DOC_TYPES);
+});
+
+app.get('/api/properties/:id/documents', (req, res) => {
+  const propertyId = Number(req.params.id);
+  const rows = db.prepare('SELECT * FROM documents WHERE property_id = ? ORDER BY uploaded_at DESC').all(propertyId);
+  res.json(rows);
+});
+
+app.post('/api/properties/:id/documents', upload.single('file'), (req, res) => {
+  const propertyId = Number(req.params.id);
+  const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(propertyId);
+  if (!property) {
+    if (req.file) fs.unlink(req.file.path, () => {});
+    return res.status(404).json({ error: 'Property not found' });
+  }
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const docType = DOC_TYPES.includes(req.body.doc_type) ? req.body.doc_type : 'Other';
+
+  const info = db.prepare(
+    'INSERT INTO documents (property_id, doc_type, original_name, stored_name, mime_type, size) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(propertyId, docType, req.file.originalname, req.file.filename, req.file.mimetype, req.file.size);
+
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json(doc);
+});
+
+app.get('/api/documents/:id/file', (req, res) => {
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  res.download(path.join(db.uploadsDir, doc.stored_name), doc.original_name);
+});
+
+app.delete('/api/documents/:id', (req, res) => {
+  const doc = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM documents WHERE id = ?').run(doc.id);
+  fs.unlink(path.join(db.uploadsDir, doc.stored_name), () => {});
   res.json({ ok: true });
 });
 

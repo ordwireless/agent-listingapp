@@ -230,8 +230,14 @@ async function renderPropertyPage(id) {
   app.innerHTML = `<div class="page">${topbarHtml()}<p class="empty">Loading…</p></div>`;
 
   let data;
+  let documents = [];
+  let docTypes = [];
   try {
-    data = await fetchJSON(`/api/properties/${id}`);
+    [data, documents, docTypes] = await Promise.all([
+      fetchJSON(`/api/properties/${id}`),
+      fetchJSON(`/api/properties/${id}/documents`),
+      fetchJSON('/api/document-types')
+    ]);
   } catch (err) {
     app.innerHTML = `<div class="page">${topbarHtml()}<p class="empty text-red">Could not load property: ${escapeHtml(err.message)}</p></div>`;
     return;
@@ -263,6 +269,20 @@ async function renderPropertyPage(id) {
       </div>
       <div id="categories">${categoriesHtml}</div>
       <button class="add-category-btn" id="add-category-btn">+ Add category</button>
+
+      <h2 class="section-title">Documents</h2>
+      <div class="category">
+        <div class="category-body" style="padding-top:14px">
+          <div id="documents-list">${renderDocumentsList(documents)}</div>
+          <button type="button" class="add-field-btn" id="show-upload-btn">+ Add document</button>
+          <div class="upload-row" id="upload-row" style="display:none">
+            <select id="doc-type-select">${docTypes.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}</select>
+            <input type="file" id="doc-file-input">
+            <button type="button" class="upload-btn" id="doc-upload-btn">Upload</button>
+          </div>
+          <p class="upload-status" id="upload-status"></p>
+        </div>
+      </div>
     </div>
   `;
 
@@ -301,8 +321,82 @@ async function renderPropertyPage(id) {
     startEditingAddress(e.target, property.id);
   });
 
+  app.querySelector('#show-upload-btn').addEventListener('click', () => {
+    app.querySelector('#upload-row').style.display = 'flex';
+    app.querySelector('#show-upload-btn').style.display = 'none';
+  });
+
+  app.querySelector('#doc-upload-btn').addEventListener('click', () => uploadDocument(property.id));
+
+  wireDocumentDeletes(property.id);
   wireCategoryToggles(property.id);
   wireFieldEditing(property.id);
+}
+
+function formatBytes(n) {
+  if (!n && n !== 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const DOC_ICON = '<svg class="doc-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/></svg>';
+
+function renderDocumentsList(documents) {
+  if (documents.length === 0) {
+    return '<p class="empty" style="padding:0 0 8px">No documents yet.</p>';
+  }
+  return documents.map((d) => `
+    <div class="doc-row">
+      ${DOC_ICON}
+      <div class="doc-info">
+        <a class="doc-name" href="/api/documents/${d.id}/file" target="_blank" rel="noopener">${escapeHtml(d.original_name)}</a>
+        <div class="doc-meta">${escapeHtml(d.doc_type)} · ${formatBytes(d.size)} · ${escapeHtml(formatDate(d.uploaded_at.slice(0, 10)) || '')}</div>
+      </div>
+      <button type="button" class="doc-delete-btn" data-doc-id="${d.id}" aria-label="Delete document">Delete</button>
+    </div>
+  `).join('');
+}
+
+function wireDocumentDeletes(propertyId) {
+  app.querySelectorAll('.doc-delete-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const sure = window.confirm('Delete this document?');
+      if (!sure) return;
+      await fetchJSON(`/api/documents/${btn.dataset.docId}`, { method: 'DELETE' });
+      rerenderPropertyPreservingScroll(propertyId);
+    });
+  });
+}
+
+async function uploadDocument(propertyId) {
+  const fileInput = app.querySelector('#doc-file-input');
+  const typeSelect = app.querySelector('#doc-type-select');
+  const statusEl = app.querySelector('#upload-status');
+  const file = fileInput.files[0];
+  if (!file) {
+    statusEl.textContent = 'Choose a file first.';
+    statusEl.className = 'upload-status text-red';
+    return;
+  }
+  statusEl.textContent = 'Uploading…';
+  statusEl.className = 'upload-status';
+
+  const formData = new FormData();
+  formData.append('doc_type', typeSelect.value);
+  formData.append('file', file);
+
+  try {
+    const res = await fetch(`/api/properties/${propertyId}/documents`, { method: 'POST', body: formData });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Upload failed');
+    }
+    rerenderPropertyPreservingScroll(propertyId);
+  } catch (err) {
+    statusEl.textContent = 'Could not upload: ' + err.message;
+    statusEl.className = 'upload-status text-red';
+  }
 }
 
 function startEditingAddress(btn, propertyId) {

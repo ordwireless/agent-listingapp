@@ -5,6 +5,9 @@ const Database = require('better-sqlite3');
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
+const uploadsDir = path.join(dataDir, 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
 const db = new Database(path.join(dataDir, 'app.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -45,6 +48,17 @@ CREATE TABLE IF NOT EXISTS property_field_values (
   field_id INTEGER NOT NULL REFERENCES fields(id),
   value TEXT,
   UNIQUE(property_id, field_id)
+);
+
+CREATE TABLE IF NOT EXISTS documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  doc_type TEXT NOT NULL,
+  original_name TEXT NOT NULL,
+  stored_name TEXT NOT NULL,
+  mime_type TEXT,
+  size INTEGER,
+  uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
 
@@ -147,3 +161,4 @@ if (categoryCount === 0) {
 }
 
 module.exports = db;
+module.exports.uploadsDir = uploadsDir;
