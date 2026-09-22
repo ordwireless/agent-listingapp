@@ -7,6 +7,13 @@ function statusBadgeClass(status) {
   return 'badge-preparing';
 }
 
+function statusStripeColor(status) {
+  if (status === 'Active') return '#1d4ed8';
+  if (status === 'Under Contract') return '#c2600b';
+  if (status === 'Closed') return '#157a3c';
+  return '#c9cbd1';
+}
+
 function escapeHtml(str) {
   return String(str == null ? '' : str)
     .replace(/&/g, '&amp;')
@@ -22,6 +29,39 @@ function formatDate(iso) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function daysBetween(fromISO, toISO) {
+  const a = new Date(fromISO + 'T00:00:00');
+  const b = new Date(toISO + 'T00:00:00');
+  return Math.round((b - a) / 86400000);
+}
+
+function relativeDateLabel(iso) {
+  if (!iso) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  const diff = daysBetween(today, iso);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Tomorrow';
+  if (diff > 1 && diff <= 13) return `In ${diff} days`;
+  return formatDate(iso);
+}
+
+function timeAgo(iso) {
+  if (!iso) return '';
+  const then = new Date(iso.replace(' ', 'T') + 'Z');
+  if (Number.isNaN(then.getTime())) return '';
+  const diffMs = Date.now() - then.getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'Updated just now';
+  if (mins < 60) return `Updated ${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `Updated ${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `Updated ${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `Updated ${weeks}w ago`;
+  return `Updated ${formatDate(then.toISOString().slice(0, 10))}`;
+}
+
 async function fetchJSON(url, options) {
   const res = await fetch(url, options);
   if (!res.ok) {
@@ -33,6 +73,29 @@ async function fetchJSON(url, options) {
 
 function navigate(hash) {
   window.location.hash = hash;
+}
+
+function topbarHtml() {
+  return `
+    <div class="topbar">
+      <div class="topbar-mark">AL</div>
+      <span class="topbar-name">Agent listing app</span>
+    </div>
+  `;
+}
+
+const CATEGORY_ICONS = {
+  structure: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9h14v-9"/><path d="M9.5 19v-5h5v5"/>',
+  systems: '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/>',
+  utilities: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11Z"/>',
+  hoa: '<path d="M12 3 4 6.5V11c0 5 3.4 8.7 8 10 4.6-1.3 8-5 8-10V6.5L12 3Z"/>',
+  dates: '<rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M3.5 9.5h17"/><path d="M8 3v4M16 3v4"/>',
+  contacts: '<circle cx="9" cy="8.5" r="3.2"/><path d="M2.8 20c0-3.4 2.8-6 6.2-6s6.2 2.6 6.2 6"/><path d="M16.5 4.3a3.2 3.2 0 0 1 0 6.2M21.2 20c0-2.8-1.9-5.1-4.5-5.8"/>'
+};
+
+function categoryIconSvg(key) {
+  const path = CATEGORY_ICONS[key] || CATEGORY_ICONS.dates;
+  return `<svg class="category-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
 }
 
 window.addEventListener('hashchange', render);
@@ -55,6 +118,7 @@ let homeTab = 'active';
 async function renderHome() {
   app.innerHTML = `
     <div class="page">
+      ${topbarHtml()}
       <p class="eyebrow">HOME</p>
       <h1>Properties</h1>
       <div class="stats" id="stats"></div>
@@ -106,21 +170,38 @@ async function renderHome() {
 }
 
 function renderCard(p) {
-  const priceLine = p.list_price ? escapeHtml(p.list_price) : '<span style="color:#9ca3af">No price yet</span>';
-  const nextLine = p.next_date ? `Next: ${formatDate(p.next_date)}` : 'Next: —';
+  const priceLine = p.list_price
+    ? `<div class="card-price">${escapeHtml(p.list_price)}</div>`
+    : `<div class="card-price muted">No price yet</div>`;
+
+  let dateLine;
+  if (p.overdue_date) {
+    dateLine = `<div class="card-line text-red">Overdue: ${escapeHtml(p.overdue_label)} (${formatDate(p.overdue_date)})</div>`;
+  } else if (p.next_date) {
+    const rel = relativeDateLabel(p.next_date);
+    const soon = daysBetween(new Date().toISOString().slice(0, 10), p.next_date) <= 3;
+    dateLine = `<div class="card-line ${soon ? 'text-orange' : ''}">${escapeHtml(p.next_date_label)}: ${rel}</div>`;
+  } else {
+    dateLine = `<div class="card-line">No upcoming dates</div>`;
+  }
+
   const missingLine = p.missing_count > 0
-    ? `<span class="text-red">${p.missing_count} item${p.missing_count === 1 ? '' : 's'} missing</span>`
-    : '<span class="text-green">Complete</span>';
+    ? `<div class="card-line text-red">${p.missing_count} item${p.missing_count === 1 ? '' : 's'} missing</div>`
+    : `<div class="card-line text-green">Complete</div>`;
 
   return `
-    <button class="card" data-id="${p.id}" type="button">
+    <button class="card" data-id="${p.id}" type="button" style="--stripe:${statusStripeColor(p.status)}">
       <div class="card-top">
-        <span class="card-addr">${escapeHtml(p.address)}</span>
+        <div class="card-addr-wrap">
+          ${p.missing_count > 0 ? '<span class="missing-dot"></span>' : ''}
+          <span class="card-addr">${escapeHtml(p.address)}</span>
+        </div>
         <span class="badge ${statusBadgeClass(p.status)}">${escapeHtml(p.status)}</span>
       </div>
-      <div class="card-price">${priceLine}</div>
-      <div class="card-line">${nextLine}</div>
-      <div class="card-line">${missingLine}</div>
+      ${priceLine}
+      ${dateLine}
+      ${missingLine}
+      <div class="card-updated">${escapeHtml(timeAgo(p.updated_at))}</div>
     </button>
   `;
 }
@@ -146,13 +227,13 @@ const collapsedCategories = {};
 const expandedLongFields = {};
 
 async function renderPropertyPage(id) {
-  app.innerHTML = `<div class="page"><p class="empty">Loading…</p></div>`;
+  app.innerHTML = `<div class="page">${topbarHtml()}<p class="empty">Loading…</p></div>`;
 
   let data;
   try {
     data = await fetchJSON(`/api/properties/${id}`);
   } catch (err) {
-    app.innerHTML = `<div class="page"><p class="empty text-red">Could not load property: ${escapeHtml(err.message)}</p></div>`;
+    app.innerHTML = `<div class="page">${topbarHtml()}<p class="empty text-red">Could not load property: ${escapeHtml(err.message)}</p></div>`;
     return;
   }
 
@@ -166,13 +247,15 @@ async function renderPropertyPage(id) {
 
   app.innerHTML = `
     <div class="page">
+      ${topbarHtml()}
       <button class="back-link" id="back-btn">&larr; Back to properties</button>
       <div class="property-header">
         <div>
           <p class="eyebrow">QUICK VIEW</p>
-          <h1 style="margin-bottom:4px">${escapeHtml(property.address)}</h1>
+          <button type="button" class="property-title" id="address-btn" data-raw-value="${escapeHtml(property.address)}">${escapeHtml(property.address)}</button>
+          <div class="property-updated">${escapeHtml(timeAgo(property.updated_at))}</div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
+        <div class="property-controls">
           <select class="status-select" id="status-select">${statusOptions}</select>
           <button class="archive-btn" id="archive-btn">${property.archived ? 'Unarchive' : 'Archive'}</button>
         </div>
@@ -190,6 +273,7 @@ async function renderPropertyPage(id) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: e.target.value })
     });
+    rerenderPropertyPreservingScroll(property.id);
   });
 
   app.querySelector('#archive-btn').addEventListener('click', async () => {
@@ -205,8 +289,40 @@ async function renderPropertyPage(id) {
     window.alert('Adding new categories to the template is coming next — for now the checklist is fixed.');
   });
 
+  app.querySelector('#address-btn').addEventListener('click', (e) => {
+    startEditingAddress(e.target, property.id);
+  });
+
   wireCategoryToggles(property.id);
   wireFieldEditing(property.id);
+}
+
+function startEditingAddress(btn, propertyId) {
+  const rawValue = btn.dataset.rawValue || '';
+  const input = document.createElement('input');
+  input.className = 'property-title-input';
+  input.type = 'text';
+  input.value = rawValue;
+  btn.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const commit = async () => {
+    const next = input.value.trim();
+    if (next && next !== rawValue) {
+      await fetchJSON(`/api/properties/${propertyId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: next })
+      });
+    }
+    renderPropertyPage(propertyId);
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') input.blur();
+    if (e.key === 'Escape') { input.value = rawValue; input.blur(); }
+  });
 }
 
 function renderCategory(cat, values, propertyId) {
@@ -216,7 +332,10 @@ function renderCategory(cat, values, propertyId) {
   return `
     <div class="category" data-cat-id="${cat.id}">
       <button class="category-header" data-cat-id="${cat.id}" type="button">
-        <span class="category-title">${escapeHtml(cat.title)}</span>
+        <span class="category-title-wrap">
+          ${categoryIconSvg(cat.key)}
+          <span class="category-title">${escapeHtml(cat.title)}</span>
+        </span>
         <span class="category-toggle">${isCollapsed ? 'Show' : 'Hide'}</span>
       </button>
       <div class="category-body" style="${isCollapsed ? 'display:none' : ''}">

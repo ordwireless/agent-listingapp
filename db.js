@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS properties (
   status TEXT NOT NULL DEFAULT 'Preparing',
   list_price TEXT,
   archived INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS property_field_values (
@@ -45,6 +46,13 @@ CREATE TABLE IF NOT EXISTS property_field_values (
   UNIQUE(property_id, field_id)
 );
 `);
+
+// Migration: add updated_at to properties created before this column existed.
+const propertyColumns = db.prepare("PRAGMA table_info(properties)").all().map((c) => c.name);
+if (!propertyColumns.includes('updated_at')) {
+  db.exec("ALTER TABLE properties ADD COLUMN updated_at TEXT");
+  db.exec("UPDATE properties SET updated_at = created_at WHERE updated_at IS NULL");
+}
 
 // Seed the master template once, on first run only.
 const categoryCount = db.prepare('SELECT COUNT(*) AS n FROM categories').get().n;

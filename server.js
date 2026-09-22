@@ -31,6 +31,9 @@ function summarizeProperty(property) {
 
   let missingCount = 0;
   let nextDate = null;
+  let nextDateLabel = null;
+  let overdueDate = null;
+  let overdueLabel = null;
   let priceValue = null;
   const today = todayISO();
 
@@ -43,6 +46,13 @@ function summarizeProperty(property) {
       if (field.field_type === 'date' && val) {
         if (val >= today && (nextDate === null || val < nextDate)) {
           nextDate = val;
+          nextDateLabel = field.label;
+        }
+        if (field.important && val < today && property.status !== 'Closed') {
+          if (overdueDate === null || val > overdueDate) {
+            overdueDate = val;
+            overdueLabel = field.label;
+          }
         }
       }
       if (field.key === 'price' && val) {
@@ -58,7 +68,11 @@ function summarizeProperty(property) {
     list_price: priceValue,
     archived: !!property.archived,
     missing_count: missingCount,
-    next_date: nextDate
+    next_date: nextDate,
+    next_date_label: nextDateLabel,
+    overdue_date: overdueDate,
+    overdue_label: overdueLabel,
+    updated_at: property.updated_at
   };
 }
 
@@ -109,7 +123,8 @@ app.get('/api/properties/:id', (req, res) => {
       address: property.address,
       status: property.status,
       list_price: property.list_price,
-      archived: !!property.archived
+      archived: !!property.archived,
+      updated_at: property.updated_at
     },
     template,
     values: valueByFieldId,
@@ -128,7 +143,7 @@ app.patch('/api/properties/:id', (req, res) => {
     archived: req.body.archived !== undefined ? (req.body.archived ? 1 : 0) : property.archived
   };
 
-  db.prepare('UPDATE properties SET address = ?, status = ?, list_price = ?, archived = ? WHERE id = ?').run(
+  db.prepare('UPDATE properties SET address = ?, status = ?, list_price = ?, archived = ?, updated_at = datetime(\'now\') WHERE id = ?').run(
     next.address,
     next.status,
     next.list_price,
@@ -153,6 +168,7 @@ app.put('/api/properties/:id/values/:fieldId', (req, res) => {
     `INSERT INTO property_field_values (property_id, field_id, value) VALUES (?, ?, ?)
      ON CONFLICT(property_id, field_id) DO UPDATE SET value = excluded.value`
   ).run(propertyId, fieldId, value);
+  db.prepare("UPDATE properties SET updated_at = datetime('now') WHERE id = ?").run(propertyId);
 
   res.json({ ok: true });
 });
