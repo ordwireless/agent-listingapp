@@ -247,13 +247,17 @@ select.status-select {
 }
 
 .field-value {
+  font: inherit;
   font-weight: 500;
   color: #111827;
   text-align: right;
-  cursor: text;
+  cursor: pointer;
   min-width: 40px;
   border-radius: 4px;
   padding: 2px 4px;
+  background: none;
+  border: none;
+  appearance: none;
 }
 
 .field-value:hover {

@@ -238,7 +238,7 @@ function renderFieldRow(field, rawValue, propertyId) {
     return `
       <div class="field-row">
         <span class="field-label">${escapeHtml(field.label)}</span>
-        <span class="field-value ${emptyClass}" data-field-id="${field.id}" data-field-type="${inputType}" data-raw-value="${escapeHtml(value)}">${display}</span>
+        <button type="button" class="field-value ${emptyClass}" data-field-id="${field.id}" data-field-type="${inputType}" data-raw-value="${escapeHtml(value)}">${display}</button>
       </div>
     `;
   }
