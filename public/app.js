@@ -244,20 +244,24 @@ function renderFieldRow(field, rawValue, propertyId) {
   }
 
   const isExpanded = !!expandedLongFields[field.id];
-  const preview = value ? escapeHtml(value.length > 40 ? value.slice(0, 40) + '…' : value) : (field.important ? 'Unknown' : '—');
+  const preview = value ? escapeHtml(value.length > 30 ? value.slice(0, 30) + '…' : value) : (field.important ? 'Unknown' : '—');
+  const emptyClass = !value && field.important ? 'empty' : '';
 
   return `
     <div class="long-row" data-field-id="${field.id}">
       <div class="long-top">
-        <span class="field-label">${escapeHtml(field.label)}</span>
-        <div style="display:flex;align-items:center;gap:6px;min-width:0">
-          <span class="long-preview">${preview}</span>
-          <button class="expand-btn" data-long-toggle="${field.id}" type="button">${isExpanded ? 'Collapse' : 'Expand'}</button>
-        </div>
+        <button type="button" class="field-label-btn" data-long-toggle="${field.id}">${escapeHtml(field.label)}</button>
+        <button type="button" class="field-value ${emptyClass}" data-field-id="${field.id}" data-field-type="text" data-raw-value="${escapeHtml(value)}">${preview}</button>
       </div>
-      ${isExpanded ? `<div class="long-full"><textarea data-field-id="${field.id}" data-field-type="long_text">${escapeHtml(value)}</textarea></div>` : ''}
+      ${isExpanded ? `<div class="long-full"><textarea data-field-id="${field.id}" data-field-type="long_text" placeholder="Full details…">${escapeHtml(value)}</textarea></div>` : ''}
     </div>
   `;
+}
+
+async function rerenderPropertyPreservingScroll(propertyId) {
+  const scrollY = window.scrollY;
+  await renderPropertyPage(propertyId);
+  window.scrollTo(0, scrollY);
 }
 
 function wireCategoryToggles(propertyId) {
@@ -265,7 +269,7 @@ function wireCategoryToggles(propertyId) {
     btn.addEventListener('click', () => {
       const catId = btn.dataset.catId;
       collapsedCategories[catId] = !collapsedCategories[catId];
-      renderPropertyPage(propertyId);
+      rerenderPropertyPreservingScroll(propertyId);
     });
   });
 
@@ -273,7 +277,7 @@ function wireCategoryToggles(propertyId) {
     btn.addEventListener('click', () => {
       const fieldId = btn.dataset.longToggle;
       expandedLongFields[fieldId] = !expandedLongFields[fieldId];
-      renderPropertyPage(propertyId);
+      rerenderPropertyPreservingScroll(propertyId);
     });
   });
 }
@@ -298,6 +302,9 @@ function startEditingField(span, propertyId) {
   input.value = rawValue;
   span.replaceWith(input);
   input.focus();
+  if (input.type === 'date' && typeof input.showPicker === 'function') {
+    try { input.showPicker(); } catch (e) { /* not supported here, fall back to native tap */ }
+  }
 
   const commit = () => saveFieldValue(propertyId, fieldId, input.value);
   input.addEventListener('blur', commit);
@@ -317,5 +324,5 @@ async function saveFieldValue(propertyId, fieldId, value) {
   } catch (err) {
     window.alert('Could not save: ' + err.message);
   }
-  renderPropertyPage(propertyId);
+  rerenderPropertyPreservingScroll(propertyId);
 }

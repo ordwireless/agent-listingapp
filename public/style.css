@@ -295,24 +295,22 @@ select.status-select {
   gap: 8px;
 }
 
-.long-preview {
-  font-weight: 500;
-  color: #111827;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 200px;
+.field-label-btn {
+  font: inherit;
+  color: #6b7280;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  appearance: none;
+  padding: 2px 4px 2px 0;
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
 }
 
-.expand-btn {
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
-  background: #ffffff;
+.field-label-btn:hover {
   color: #2563eb;
-  font-size: 11px;
-  padding: 2px 8px;
-  cursor: pointer;
-  white-space: nowrap;
 }
 
 .long-full {
