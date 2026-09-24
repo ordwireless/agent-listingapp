@@ -1,5 +1,7 @@
 const app = document.getElementById('app');
 
+// ---------- helpers ----------
+
 function statusBadgeClass(status) {
   if (status === 'Active') return 'badge-active';
   if (status === 'Under Contract') return 'badge-undercontract';
@@ -7,11 +9,11 @@ function statusBadgeClass(status) {
   return 'badge-preparing';
 }
 
-function statusStripeColor(status) {
-  if (status === 'Active') return '#1d4ed8';
-  if (status === 'Under Contract') return '#c2600b';
-  if (status === 'Closed') return '#157a3c';
-  return '#c9cbd1';
+function statusTheme(status) {
+  if (status === 'Active') return { tint: '#dff7fc', ink: '#0e7490' };
+  if (status === 'Under Contract') return { tint: '#fff2c7', ink: '#854d0e' };
+  if (status === 'Closed') return { tint: '#dcfce7', ink: '#166534' };
+  return { tint: '#e5e7eb', ink: '#6b7280' };
 }
 
 function escapeHtml(str) {
@@ -20,6 +22,12 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function todayISO() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function formatDate(iso) {
@@ -37,8 +45,7 @@ function daysBetween(fromISO, toISO) {
 
 function relativeDateLabel(iso) {
   if (!iso) return null;
-  const today = new Date().toISOString().slice(0, 10);
-  const diff = daysBetween(today, iso);
+  const diff = daysBetween(todayISO(), iso);
   if (diff === 0) return 'Today';
   if (diff === 1) return 'Tomorrow';
   if (diff > 1 && diff <= 13) return `In ${diff} days`;
@@ -75,16 +82,9 @@ function navigate(hash) {
   window.location.hash = hash;
 }
 
-function topbarHtml() {
-  return `
-    <div class="topbar">
-      <div class="topbar-mark">AL</div>
-      <span class="topbar-name">Agent listing app</span>
-    </div>
-  `;
-}
-
-const CATEGORY_ICONS = {
+const ICONS = {
+  back: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+  file: '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/>',
   structure: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9h14v-9"/><path d="M9.5 19v-5h5v5"/>',
   systems: '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/>',
   utilities: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11Z"/>',
@@ -93,9 +93,31 @@ const CATEGORY_ICONS = {
   contacts: '<circle cx="9" cy="8.5" r="3.2"/><path d="M2.8 20c0-3.4 2.8-6 6.2-6s6.2 2.6 6.2 6"/><path d="M16.5 4.3a3.2 3.2 0 0 1 0 6.2M21.2 20c0-2.8-1.9-5.1-4.5-5.8"/>'
 };
 
-function categoryIconSvg(key) {
-  const path = CATEGORY_ICONS[key] || CATEGORY_ICONS.dates;
-  return `<svg class="category-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
+function iconSvg(key, cls) {
+  const path = ICONS[key] || ICONS.dates;
+  return `<svg class="${cls || 'icon'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+}
+
+// Top bar: navy with a neon line. On a property page it carries the back button and the (editable) address.
+function appbarHtml(opts) {
+  if (opts && opts.back) {
+    return `
+      <header class="appbar">
+        <div class="appbar-inner">
+          <button type="button" class="appbar-back" id="back-btn" aria-label="Back to properties">${iconSvg('back')}</button>
+          <button type="button" class="appbar-title" id="address-btn" data-raw-value="${escapeHtml(opts.title)}" title="Click to edit the address">${escapeHtml(opts.title)}</button>
+        </div>
+      </header>
+    `;
+  }
+  return `
+    <header class="appbar">
+      <div class="appbar-inner">
+        <span class="appbar-mark">AL</span>
+        <span class="appbar-title static">${escapeHtml((opts && opts.title) || 'My properties')}</span>
+      </div>
+    </header>
+  `;
 }
 
 window.addEventListener('hashchange', render);
@@ -117,10 +139,8 @@ let homeTab = 'active';
 
 async function renderHome() {
   app.innerHTML = `
+    ${appbarHtml({ title: 'My properties' })}
     <div class="page">
-      ${topbarHtml()}
-      <p class="eyebrow">HOME</p>
-      <h1>Properties</h1>
       <div class="stats" id="stats"></div>
       <div class="tabs">
         <button class="tab-btn ${homeTab === 'active' ? 'active' : ''}" data-tab="active">Active</button>
@@ -170,6 +190,7 @@ async function renderHome() {
 }
 
 function renderCard(p) {
+  const theme = statusTheme(p.status);
   const priceLine = p.list_price
     ? `<div class="card-price">${escapeHtml(p.list_price)}</div>`
     : `<div class="card-price muted">No price yet</div>`;
@@ -178,11 +199,9 @@ function renderCard(p) {
   if (p.overdue_date) {
     dateLine = `<div class="card-line text-red">Overdue: ${escapeHtml(p.overdue_label)} (${formatDate(p.overdue_date)})</div>`;
   } else if (p.next_date) {
-    const rel = relativeDateLabel(p.next_date);
-    const soon = daysBetween(new Date().toISOString().slice(0, 10), p.next_date) <= 3;
-    dateLine = `<div class="card-line ${soon ? 'text-orange' : ''}">${escapeHtml(p.next_date_label)}: ${rel}</div>`;
+    dateLine = `<div class="card-line card-ink">${escapeHtml(p.next_date_label)}: ${escapeHtml(relativeDateLabel(p.next_date))}</div>`;
   } else {
-    dateLine = `<div class="card-line">No upcoming dates</div>`;
+    dateLine = `<div class="card-line card-muted">No upcoming dates</div>`;
   }
 
   const missingLine = p.missing_count > 0
@@ -190,12 +209,9 @@ function renderCard(p) {
     : `<div class="card-line text-green">Complete</div>`;
 
   return `
-    <button class="card" data-id="${p.id}" type="button" style="--stripe:${statusStripeColor(p.status)}">
+    <button class="card" data-id="${p.id}" type="button" style="--tint:${theme.tint};--card-ink:${theme.ink}">
       <div class="card-top">
-        <div class="card-addr-wrap">
-          ${p.missing_count > 0 ? '<span class="missing-dot"></span>' : ''}
-          <span class="card-addr">${escapeHtml(p.address)}</span>
-        </div>
+        <span class="card-addr">${escapeHtml(p.address)}</span>
         <span class="badge ${statusBadgeClass(p.status)}">${escapeHtml(p.status)}</span>
       </div>
       ${priceLine}
@@ -221,13 +237,62 @@ async function addPropertyPrompt() {
   }
 }
 
-// ---------- Property quick view ----------
+// ---------- Property page ----------
 
 const collapsedCategories = {};
 const expandedLongFields = {};
 
+function valueByKey(template, values, key) {
+  for (const cat of template) {
+    for (const f of cat.fields) {
+      if (f.key === key) return values[f.id] || '';
+    }
+  }
+  return '';
+}
+
+// Build the "Missing" and "Upcoming / Overdue" summary strip from the template + values.
+function summaryStrip(property, template, values) {
+  const today = todayISO();
+  const missing = [];
+  let next = null;
+  let overdue = null;
+
+  template.forEach((cat) => {
+    cat.fields.forEach((f) => {
+      const v = values[f.id];
+      if (f.important && !v) missing.push(f.label);
+      if (f.field_type === 'date' && v) {
+        if (v >= today && (!next || v < next.date)) next = { date: v, label: f.label };
+        if (f.important && v < today && property.status !== 'Closed') {
+          if (!overdue || v > overdue.date) overdue = { date: v, label: f.label };
+        }
+      }
+    });
+  });
+
+  const missingText = missing.length === 0
+    ? 'Nothing missing'
+    : missing.slice(0, 3).map(escapeHtml).join(' · ') + (missing.length > 3 ? ` · +${missing.length - 3} more` : '');
+
+  const missingCard = missing.length === 0
+    ? `<div class="strip-card strip-ok"><div class="strip-label">Missing</div><div class="strip-text">${missingText}</div></div>`
+    : `<div class="strip-card strip-missing"><div class="strip-label">Missing</div><div class="strip-text">${missingText}</div></div>`;
+
+  let dateCard;
+  if (overdue) {
+    dateCard = `<div class="strip-card strip-missing"><div class="strip-label">Overdue</div><div class="strip-text">${escapeHtml(overdue.label)} · ${escapeHtml(formatDate(overdue.date))}</div></div>`;
+  } else if (next) {
+    dateCard = `<div class="strip-card strip-upcoming"><div class="strip-label">Upcoming</div><div class="strip-text">${escapeHtml(next.label)} · ${escapeHtml(relativeDateLabel(next.date))}</div></div>`;
+  } else {
+    dateCard = `<div class="strip-card strip-none"><div class="strip-label">Upcoming</div><div class="strip-text">No upcoming dates</div></div>`;
+  }
+
+  return `<div class="strip">${missingCard}${dateCard}</div>`;
+}
+
 async function renderPropertyPage(id) {
-  app.innerHTML = `<div class="page">${topbarHtml()}<p class="empty">Loading…</p></div>`;
+  app.innerHTML = `${appbarHtml({ title: 'Loading…' })}<div class="page"><p class="empty">Loading…</p></div>`;
 
   let data;
   let documents = [];
@@ -239,7 +304,7 @@ async function renderPropertyPage(id) {
       fetchJSON('/api/document-types')
     ]);
   } catch (err) {
-    app.innerHTML = `<div class="page">${topbarHtml()}<p class="empty text-red">Could not load property: ${escapeHtml(err.message)}</p></div>`;
+    app.innerHTML = `${appbarHtml({ title: 'Error' })}<div class="page"><p class="empty text-red">Could not load property: ${escapeHtml(err.message)}</p></div>`;
     return;
   }
 
@@ -249,30 +314,46 @@ async function renderPropertyPage(id) {
     .map((s) => `<option value="${s}" ${s === property.status ? 'selected' : ''}>${s}</option>`)
     .join('');
 
-  const categoriesHtml = template.map((cat) => renderCategory(cat, values, property.id)).join('');
+  const ctx = { status: property.status, today: todayISO() };
+  const categoriesHtml = template.map((cat, idx) => renderCategory(cat, values, idx, ctx)).join('');
+  const price = valueByKey(template, values, 'price');
+  const datesCat = template.find((c) => c.key === 'dates');
+
+  const jumpChips = [
+    ['top', 'Quick view'],
+    datesCat ? [`cat-${datesCat.id}`, 'Dates'] : null,
+    ['sec-docs', 'Documents']
+  ].filter(Boolean);
 
   app.innerHTML = `
-    <div class="page">
-      ${topbarHtml()}
-      <button class="back-link" id="back-btn">&larr; Back to properties</button>
-      <div class="property-header">
+    ${appbarHtml({ back: true, title: property.address })}
+    <div class="page" id="top">
+      <div class="prop-head">
         <div>
-          <p class="eyebrow">QUICK VIEW</p>
-          <button type="button" class="property-title" id="address-btn" data-raw-value="${escapeHtml(property.address)}">${escapeHtml(property.address)}</button>
-          <div class="property-updated">${escapeHtml(timeAgo(property.updated_at))}</div>
+          <div class="prop-price ${price ? '' : 'muted'}">${price ? escapeHtml(price) : 'No price yet'}</div>
+          <div class="prop-updated">${escapeHtml(timeAgo(property.updated_at))}</div>
         </div>
         <div class="property-controls">
-          <select class="status-select" id="status-select">${statusOptions}</select>
+          <select class="status-select" id="status-select" aria-label="Listing status">${statusOptions}</select>
           <button class="archive-btn" id="archive-btn">${property.archived ? 'Unarchive' : 'Archive'}</button>
           <button class="delete-btn" id="delete-btn" aria-label="Delete property">Delete</button>
         </div>
       </div>
+
+      ${summaryStrip(property, template, values)}
+
+      <nav class="jump" aria-label="Jump to section">
+        ${jumpChips.map(([target, label], i) => `<button type="button" class="jump-chip ${i === 0 ? 'active' : ''}" data-jump="${target}">${escapeHtml(label)}</button>`).join('')}
+      </nav>
+
       <div id="categories">${categoriesHtml}</div>
       <button class="add-category-btn" id="add-category-btn">+ Add category</button>
 
-      <h2 class="section-title">Documents</h2>
-      <div class="category">
-        <div class="category-body" style="padding-top:14px">
+      <div class="category" id="sec-docs" style="--accent:var(--cyan)">
+        <div class="category-header static">
+          <span class="category-title-wrap">${iconSvg('file', 'category-icon')}<span class="category-title">Documents</span></span>
+        </div>
+        <div class="category-body">
           <div id="documents-list">${renderDocumentsList(documents)}</div>
           <button type="button" class="add-field-btn" id="show-upload-btn">+ Add document</button>
           <div class="upload-row" id="upload-row" style="display:none">
@@ -318,7 +399,7 @@ async function renderPropertyPage(id) {
   });
 
   app.querySelector('#address-btn').addEventListener('click', (e) => {
-    startEditingAddress(e.target, property.id);
+    startEditingAddress(e.currentTarget, property.id);
   });
 
   app.querySelector('#show-upload-btn').addEventListener('click', () => {
@@ -328,81 +409,24 @@ async function renderPropertyPage(id) {
 
   app.querySelector('#doc-upload-btn').addEventListener('click', () => uploadDocument(property.id));
 
+  app.querySelectorAll('[data-jump]').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const target = document.getElementById(chip.dataset.jump);
+      if (!target) return;
+      app.querySelectorAll('.jump-chip').forEach((c) => c.classList.toggle('active', c === chip));
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+
   wireDocumentDeletes(property.id);
   wireCategoryToggles(property.id);
   wireFieldEditing(property.id);
 }
 
-function formatBytes(n) {
-  if (!n && n !== 0) return '';
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-const DOC_ICON = '<svg class="doc-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/></svg>';
-
-function renderDocumentsList(documents) {
-  if (documents.length === 0) {
-    return '<p class="empty" style="padding:0 0 8px">No documents yet.</p>';
-  }
-  return documents.map((d) => `
-    <div class="doc-row">
-      ${DOC_ICON}
-      <div class="doc-info">
-        <a class="doc-name" href="/api/documents/${d.id}/file" target="_blank" rel="noopener">${escapeHtml(d.original_name)}</a>
-        <div class="doc-meta">${escapeHtml(d.doc_type)} · ${formatBytes(d.size)} · ${escapeHtml(formatDate(d.uploaded_at.slice(0, 10)) || '')}</div>
-      </div>
-      <button type="button" class="doc-delete-btn" data-doc-id="${d.id}" aria-label="Delete document">Delete</button>
-    </div>
-  `).join('');
-}
-
-function wireDocumentDeletes(propertyId) {
-  app.querySelectorAll('.doc-delete-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const sure = window.confirm('Delete this document?');
-      if (!sure) return;
-      await fetchJSON(`/api/documents/${btn.dataset.docId}`, { method: 'DELETE' });
-      rerenderPropertyPreservingScroll(propertyId);
-    });
-  });
-}
-
-async function uploadDocument(propertyId) {
-  const fileInput = app.querySelector('#doc-file-input');
-  const typeSelect = app.querySelector('#doc-type-select');
-  const statusEl = app.querySelector('#upload-status');
-  const file = fileInput.files[0];
-  if (!file) {
-    statusEl.textContent = 'Choose a file first.';
-    statusEl.className = 'upload-status text-red';
-    return;
-  }
-  statusEl.textContent = 'Uploading…';
-  statusEl.className = 'upload-status';
-
-  const formData = new FormData();
-  formData.append('doc_type', typeSelect.value);
-  formData.append('file', file);
-
-  try {
-    const res = await fetch(`/api/properties/${propertyId}/documents`, { method: 'POST', body: formData });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || 'Upload failed');
-    }
-    rerenderPropertyPreservingScroll(propertyId);
-  } catch (err) {
-    statusEl.textContent = 'Could not upload: ' + err.message;
-    statusEl.className = 'upload-status text-red';
-  }
-}
-
 function startEditingAddress(btn, propertyId) {
   const rawValue = btn.dataset.rawValue || '';
   const input = document.createElement('input');
-  input.className = 'property-title-input';
+  input.className = 'appbar-input';
   input.type = 'text';
   input.value = rawValue;
   btn.replaceWith(input);
@@ -427,15 +451,16 @@ function startEditingAddress(btn, propertyId) {
   });
 }
 
-function renderCategory(cat, values, propertyId) {
+function renderCategory(cat, values, idx, ctx) {
   const isCollapsed = !!collapsedCategories[cat.id];
-  const rows = cat.fields.map((field) => renderFieldRow(field, values[field.id], propertyId)).join('');
+  const rows = cat.fields.map((field) => renderFieldRow(field, values[field.id], ctx)).join('');
+  const accent = idx % 2 === 0 ? 'var(--cyan)' : 'var(--amber)';
 
   return `
-    <div class="category" data-cat-id="${cat.id}">
-      <button class="category-header" data-cat-id="${cat.id}" type="button">
+    <div class="category" id="cat-${cat.id}" data-cat-id="${cat.id}" style="--accent:${accent}">
+      <button class="category-header" data-cat-id="${cat.id}" type="button" aria-expanded="${isCollapsed ? 'false' : 'true'}">
         <span class="category-title-wrap">
-          ${categoryIconSvg(cat.key)}
+          ${iconSvg(cat.key, 'category-icon')}
           <span class="category-title">${escapeHtml(cat.title)}</span>
         </span>
         <span class="category-toggle">${isCollapsed ? 'Show' : 'Hide'}</span>
@@ -448,19 +473,39 @@ function renderCategory(cat, values, propertyId) {
   `;
 }
 
-function renderFieldRow(field, rawValue, propertyId) {
+// Colors a date value: past = done (green), close = red, further out = amber, past-due deadline = red.
+function dateChipClass(field, value, ctx) {
+  const diff = daysBetween(ctx.today, value);
+  if (diff < 0) {
+    return field.important && ctx.status !== 'Closed' ? 'chip-red' : 'chip-green';
+  }
+  return diff <= 3 ? 'chip-red' : 'chip-amber';
+}
+
+function renderFieldRow(field, rawValue, ctx) {
   const value = rawValue || '';
   const isLong = field.field_type === 'long_text';
 
   if (!isLong) {
-    const display = value ? escapeHtml(field.field_type === 'date' ? (formatDate(value) || value) : value)
-      : (field.important ? 'Unknown' : '—');
-    const emptyClass = !value && field.important ? 'empty' : '';
-    const inputType = field.field_type === 'date' ? 'date' : 'text';
+    const isDate = field.field_type === 'date';
+    let display;
+    let extra = '';
+    if (!value) {
+      display = field.important ? 'Unknown' : '—';
+      if (field.important) extra = 'empty';
+    } else if (isDate) {
+      const diff = daysBetween(ctx.today, value);
+      const rel = diff >= 0 && diff <= 13 ? ` · ${relativeDateLabel(value).toLowerCase()}` : '';
+      display = escapeHtml(formatDate(value) || value) + escapeHtml(rel);
+      extra = `chip-date ${dateChipClass(field, value, ctx)}`;
+    } else {
+      display = escapeHtml(value);
+    }
+    const inputType = isDate ? 'date' : 'text';
     return `
       <div class="field-row">
         <button type="button" class="field-label-btn" data-rename-field="${field.id}" data-current-label="${escapeHtml(field.label)}">${escapeHtml(field.label)}</button>
-        <button type="button" class="field-value ${emptyClass}" data-field-id="${field.id}" data-field-type="${inputType}" data-raw-value="${escapeHtml(value)}">${display}</button>
+        <button type="button" class="field-value ${extra}" data-field-id="${field.id}" data-field-type="${inputType}" data-raw-value="${escapeHtml(value)}">${display}</button>
       </div>
     `;
   }
@@ -487,7 +532,7 @@ async function rerenderPropertyPreservingScroll(propertyId) {
 }
 
 function wireCategoryToggles(propertyId) {
-  app.querySelectorAll('.category-header').forEach((btn) => {
+  app.querySelectorAll('.category-header[data-cat-id]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const catId = btn.dataset.catId;
       collapsedCategories[catId] = !collapsedCategories[catId];
@@ -594,4 +639,70 @@ async function saveFieldValue(propertyId, fieldId, value) {
     window.alert('Could not save: ' + err.message);
   }
   rerenderPropertyPreservingScroll(propertyId);
+}
+
+// ---------- Documents ----------
+
+function formatBytes(n) {
+  if (!n && n !== 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderDocumentsList(documents) {
+  if (documents.length === 0) {
+    return '<p class="empty" style="padding:8px 0">No documents yet.</p>';
+  }
+  return documents.map((d) => `
+    <div class="doc-row">
+      ${iconSvg('file', 'doc-icon')}
+      <div class="doc-info">
+        <a class="doc-name" href="/api/documents/${d.id}/file" target="_blank" rel="noopener">${escapeHtml(d.original_name)}</a>
+        <div class="doc-meta">${escapeHtml(d.doc_type)} · ${formatBytes(d.size)} · ${escapeHtml(formatDate(d.uploaded_at.slice(0, 10)) || '')}</div>
+      </div>
+      <button type="button" class="doc-delete-btn" data-doc-id="${d.id}" aria-label="Delete document">Delete</button>
+    </div>
+  `).join('');
+}
+
+function wireDocumentDeletes(propertyId) {
+  app.querySelectorAll('.doc-delete-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const sure = window.confirm('Delete this document?');
+      if (!sure) return;
+      await fetchJSON(`/api/documents/${btn.dataset.docId}`, { method: 'DELETE' });
+      rerenderPropertyPreservingScroll(propertyId);
+    });
+  });
+}
+
+async function uploadDocument(propertyId) {
+  const fileInput = app.querySelector('#doc-file-input');
+  const typeSelect = app.querySelector('#doc-type-select');
+  const statusEl = app.querySelector('#upload-status');
+  const file = fileInput.files[0];
+  if (!file) {
+    statusEl.textContent = 'Choose a file first.';
+    statusEl.className = 'upload-status text-red';
+    return;
+  }
+  statusEl.textContent = 'Uploading…';
+  statusEl.className = 'upload-status';
+
+  const formData = new FormData();
+  formData.append('doc_type', typeSelect.value);
+  formData.append('file', file);
+
+  try {
+    const res = await fetch(`/api/properties/${propertyId}/documents`, { method: 'POST', body: formData });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Upload failed');
+    }
+    rerenderPropertyPreservingScroll(propertyId);
+  } catch (err) {
+    statusEl.textContent = 'Could not upload: ' + err.message;
+    statusEl.className = 'upload-status text-red';
+  }
 }

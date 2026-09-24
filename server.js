@@ -61,6 +61,10 @@ ${error ? `<p class="err">${error}</p>` : ''}
 </html>`;
 }
 
+app.get('/healthz', (req, res) => {
+  res.json({ ok: true, version: process.env.RAILWAY_GIT_COMMIT_SHA || 'local' });
+});
+
 app.get('/login', (req, res) => {
   res.type('html').send(loginPageHtml());
 });
