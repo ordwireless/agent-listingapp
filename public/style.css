@@ -187,7 +187,8 @@ button.appbar-title:hover { background: rgba(255, 255, 255, 0.08); }
 .card {
   border: none;
   border-radius: 20px;
-  padding: 14px 16px 12px;
+  padding: 0;
+  overflow: hidden;
   background: var(--tint, #e5e7eb);
   cursor: pointer;
   text-align: left;
@@ -200,17 +201,43 @@ button.appbar-title:hover { background: rgba(255, 255, 255, 0.08); }
   box-shadow: 0 10px 22px rgba(22, 32, 58, 0.12);
 }
 
-.card-top {
+.card-photo {
+  position: relative;
+  height: 138px;
+  background: rgba(20, 21, 26, 0.07);
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 8px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
 }
+
+.card-photo-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.card-photo-icon {
+  width: 38px;
+  height: 38px;
+  color: rgba(20, 21, 26, 0.28);
+}
+
+.card-photo .badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  box-shadow: 0 1px 4px rgba(20, 21, 26, 0.18);
+}
+
+.card-body { padding: 12px 16px 12px; }
 
 .card-addr {
   font-weight: 800;
   font-size: 15px;
+  margin-bottom: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -278,6 +305,58 @@ button.appbar-title:hover { background: rgba(255, 255, 255, 0.08); }
   flex-wrap: wrap;
   margin-bottom: 14px;
 }
+
+.prop-head-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.photo-thumb-wrap { position: relative; flex-shrink: 0; }
+
+.photo-thumb {
+  width: 108px;
+  height: 80px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #ece9e1;
+  border: 1.5px dashed #cfc9b8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #8a8578;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.photo-thumb:hover { border-color: var(--navy); color: var(--navy); }
+.photo-thumb.has { border: none; background: #dcd8cc; }
+.photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-thumb-icon { width: 22px; height: 22px; }
+
+.photo-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: var(--navy);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.photo-remove:hover { background: var(--red); }
 
 .prop-price {
   font-size: 30px;
@@ -795,10 +874,43 @@ select.status-select {
 
 .link-btn:hover { color: var(--ink); }
 
-.contact-form {
+.contact-form,
+.field-editor {
   display: grid;
   gap: 8px;
   padding: 12px 0 6px;
+}
+
+.field-editor {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+
+.field-editor:last-child { border-bottom: none; }
+
+.add-category-form {
+  background: var(--card);
+  border-radius: 18px;
+  padding: 14px 16px;
+  margin-bottom: 22px;
+  border-bottom: none;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #5c574c;
+  cursor: pointer;
+}
+
+.check input { width: 16px; height: 16px; accent-color: var(--navy); }
+
+.form-hint {
+  font-size: 12px;
+  color: var(--muted);
+  align-self: center;
 }
 
 .form-row {
@@ -809,7 +921,10 @@ select.status-select {
 
 .contact-form input,
 .contact-form select,
-.contact-form textarea {
+.contact-form textarea,
+.field-editor input:not([type="checkbox"]),
+.field-editor select,
+.field-editor textarea {
   font: inherit;
   font-size: 14px;
   padding: 9px 12px;

@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS categories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   key TEXT UNIQUE NOT NULL,
   title TEXT NOT NULL,
-  sort_order INTEGER NOT NULL
+  sort_order INTEGER NOT NULL,
+  property_id INTEGER REFERENCES properties(id)
 );
 
 CREATE TABLE IF NOT EXISTS fields (
@@ -40,6 +41,7 @@ CREATE TABLE IF NOT EXISTS properties (
   status TEXT NOT NULL DEFAULT 'Preparing',
   list_price TEXT,
   archived INTEGER NOT NULL DEFAULT 0,
+  photo_name TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -117,6 +119,15 @@ if (!propertyColumns.includes('updated_at')) {
 const fieldColumns = db.prepare("PRAGMA table_info(fields)").all().map((c) => c.name);
 if (!fieldColumns.includes('property_id')) {
   db.exec("ALTER TABLE fields ADD COLUMN property_id INTEGER REFERENCES properties(id)");
+}
+
+if (!propertyColumns.includes('photo_name')) {
+  db.exec("ALTER TABLE properties ADD COLUMN photo_name TEXT");
+}
+
+const categoryColumns = db.prepare("PRAGMA table_info(categories)").all().map((c) => c.name);
+if (!categoryColumns.includes('property_id')) {
+  db.exec("ALTER TABLE categories ADD COLUMN property_id INTEGER REFERENCES properties(id)");
 }
 
 // Seed the master template once, on first run only.

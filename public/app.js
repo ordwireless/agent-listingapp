@@ -86,6 +86,8 @@ const ICONS = {
   back: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
   file: '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/>',
   note: '<path d="M5 4h14v16H5z"/><path d="M8.5 9h7M8.5 13h7M8.5 17h4"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13.5" r="3.5"/>',
+  custom: '<path d="M4 7h16M4 12h16M4 17h10"/>',
   phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',
   structure: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9h14v-9"/><path d="M9.5 19v-5h5v5"/>',
   systems: '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/>',
@@ -96,7 +98,7 @@ const ICONS = {
 };
 
 function iconSvg(key, cls) {
-  const path = ICONS[key] || ICONS.dates;
+  const path = ICONS[key] || ICONS.custom;
   return `<svg class="${cls || 'icon'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
 }
 
@@ -210,18 +212,45 @@ function renderCard(p) {
     ? `<div class="card-line text-red">${p.missing_count} item${p.missing_count === 1 ? '' : 's'} missing</div>`
     : `<div class="card-line text-green">Complete</div>`;
 
+  const photo = p.photo_name
+    ? `<img class="card-photo-img" src="${photoUrl(p.id, p.photo_name)}" alt="" loading="lazy">`
+    : iconSvg('structure', 'card-photo-icon');
+
   return `
     <button class="card" data-id="${p.id}" type="button" style="--tint:${theme.tint};--card-ink:${theme.ink}">
-      <div class="card-top">
-        <span class="card-addr">${escapeHtml(p.address)}</span>
+      <div class="card-photo">
+        ${photo}
         <span class="badge ${statusBadgeClass(p.status)}">${escapeHtml(p.status)}</span>
       </div>
-      ${priceLine}
-      ${dateLine}
-      ${missingLine}
-      <div class="card-updated">${escapeHtml(timeAgo(p.updated_at))}</div>
+      <div class="card-body">
+        <div class="card-addr">${escapeHtml(p.address)}</div>
+        ${priceLine}
+        ${dateLine}
+        ${missingLine}
+        <div class="card-updated">${escapeHtml(timeAgo(p.updated_at))}</div>
+      </div>
     </button>
   `;
+}
+
+function photoUrl(propertyId, photoName) {
+  return `/api/properties/${propertyId}/photo?v=${encodeURIComponent(photoName)}`;
+}
+
+// Shrinks a phone photo before uploading (max 1280px, JPEG) so uploads stay small and fast.
+async function shrinkImage(file, maxSide = 1280, quality = 0.85) {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    return blob || file;
+  } catch (e) {
+    return file; // format the browser can't decode: send the original
+  }
 }
 
 async function addPropertyPrompt() {
@@ -248,6 +277,9 @@ const expandedLongFields = {};
 let uiPropertyId = null;
 let contactFormId = null; // 'new' | contact id | null
 let expandedNotes = {};
+let addFieldFor = null; // category id whose "add field" form is open
+let editingFieldId = null; // field id whose editor is open
+let addCategoryOpen = false;
 
 function valueByKey(template, values, key) {
   for (const cat of template) {
@@ -305,6 +337,9 @@ async function renderPropertyPage(id) {
     uiPropertyId = id;
     contactFormId = null;
     expandedNotes = {};
+    addFieldFor = null;
+    editingFieldId = null;
+    addCategoryOpen = false;
   }
 
   let data;
@@ -352,9 +387,20 @@ async function renderPropertyPage(id) {
     ${appbarHtml({ back: true, title: property.address })}
     <div class="page" id="top">
       <div class="prop-head">
-        <div>
-          <div class="prop-price ${price ? '' : 'muted'}">${price ? escapeHtml(price) : 'No price yet'}</div>
-          <div class="prop-updated">${escapeHtml(timeAgo(property.updated_at))}</div>
+        <div class="prop-head-main">
+          <div class="photo-thumb-wrap">
+            <label class="photo-thumb ${property.photo_name ? 'has' : ''}" title="${property.photo_name ? 'Change photo' : 'Add a photo'}">
+              ${property.photo_name
+                ? `<img src="${photoUrl(property.id, property.photo_name)}" alt="Property photo">`
+                : `${iconSvg('camera', 'photo-thumb-icon')}<span>Add photo</span>`}
+              <input type="file" accept="image/*" id="photo-input" hidden>
+            </label>
+            ${property.photo_name ? '<button type="button" class="photo-remove" id="photo-remove-btn" aria-label="Remove photo">×</button>' : ''}
+          </div>
+          <div>
+            <div class="prop-price ${price ? '' : 'muted'}">${price ? escapeHtml(price) : 'No price yet'}</div>
+            <div class="prop-updated">${escapeHtml(timeAgo(property.updated_at))}</div>
+          </div>
         </div>
         <div class="property-controls">
           <select class="status-select" id="status-select" aria-label="Listing status">${statusOptions}</select>
@@ -370,7 +416,7 @@ async function renderPropertyPage(id) {
       </nav>
 
       <div id="categories">${categoriesHtml}</div>
-      <button class="add-category-btn" id="add-category-btn">+ Add category</button>
+      ${renderAddCategory()}
 
       ${renderContactsSection(contacts, contactRoles)}
       ${renderNotesSection(notes)}
@@ -420,9 +466,34 @@ async function renderPropertyPage(id) {
     navigate('#/');
   });
 
-  app.querySelector('#add-category-btn').addEventListener('click', () => {
-    window.alert('Adding new categories to the template is coming next — for now the checklist is fixed.');
+  wireTemplateEditing(property.id);
+
+  app.querySelector('#photo-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const blob = await shrinkImage(file);
+      const formData = new FormData();
+      formData.append('photo', blob, 'photo.jpg');
+      const res = await fetch(`/api/properties/${property.id}/photo`, { method: 'POST', body: formData });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || 'Upload failed');
+      }
+    } catch (err) {
+      window.alert('Could not upload the photo: ' + err.message);
+    }
+    rerenderPropertyPreservingScroll(property.id);
   });
+
+  const photoRemove = app.querySelector('#photo-remove-btn');
+  if (photoRemove) {
+    photoRemove.addEventListener('click', async () => {
+      if (!window.confirm('Remove this photo?')) return;
+      await fetchJSON(`/api/properties/${property.id}/photo`, { method: 'DELETE' });
+      rerenderPropertyPreservingScroll(property.id);
+    });
+  }
 
   app.querySelector('#address-btn').addEventListener('click', (e) => {
     startEditingAddress(e.currentTarget, property.id);
@@ -705,9 +776,78 @@ function startEditingAddress(btn, propertyId) {
   });
 }
 
+function checkboxHtml(name, checked, label) {
+  return `<label class="check"><input type="checkbox" name="${name}" ${checked ? 'checked' : ''}> ${escapeHtml(label)}</label>`;
+}
+
+function fieldEditorHtml(field) {
+  const shared = !field.property_id;
+  return `
+    <form class="field-editor" data-field-editor="${field.id}">
+      <input name="label" type="text" value="${escapeHtml(field.label)}" placeholder="Field name" required aria-label="Field name">
+      ${checkboxHtml('important', field.important, 'Important — show under Missing when empty')}
+      <div class="form-actions">
+        <button type="submit" class="upload-btn">Save</button>
+        <button type="button" class="link-btn" data-cancel-form>Cancel</button>
+        ${field.key === 'price' ? '' : `<button type="button" class="doc-delete-btn" data-remove-field="${field.id}" data-remove-label="${escapeHtml(field.label)}" data-remove-shared="${shared ? '1' : ''}">Remove</button>`}
+      </div>
+    </form>
+  `;
+}
+
+function addFieldFormHtml(cat) {
+  return `
+    <form class="field-editor" data-add-field-form="${cat.id}">
+      <input name="label" type="text" placeholder="Field name (e.g. Generator)" required aria-label="Field name">
+      <div class="form-row">
+        <select name="field_type" aria-label="Field type">
+          <option value="text">Short text</option>
+          <option value="long_text">Long text</option>
+          <option value="date">Date</option>
+        </select>
+        ${cat.property_id
+          ? '<span class="form-hint">This category belongs to this property only.</span>'
+          : `<select name="scope" aria-label="Applies to">
+              <option value="all">All properties</option>
+              <option value="property">This property only</option>
+            </select>`}
+      </div>
+      ${checkboxHtml('important', false, 'Important — show under Missing when empty')}
+      <div class="form-actions">
+        <button type="submit" class="upload-btn">Add field</button>
+        <button type="button" class="link-btn" data-cancel-form>Cancel</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderAddCategory() {
+  if (!addCategoryOpen) {
+    return '<button class="add-category-btn" id="add-category-btn">+ Add category</button>';
+  }
+  return `
+    <form class="field-editor add-category-form" id="add-category-form">
+      <input name="title" type="text" placeholder="Category name (e.g. Pool)" required aria-label="Category name">
+      <select name="scope" aria-label="Applies to">
+        <option value="all">All properties</option>
+        <option value="property">This property only</option>
+      </select>
+      <div class="form-actions">
+        <button type="submit" class="upload-btn">Add category</button>
+        <button type="button" class="link-btn" data-cancel-form>Cancel</button>
+      </div>
+    </form>
+  `;
+}
+
 function renderCategory(cat, values, idx, ctx) {
   const isCollapsed = !!collapsedCategories[cat.id];
-  const rows = cat.fields.map((field) => renderFieldRow(field, values[field.id], ctx)).join('');
+  const rows = cat.fields
+    .map((field) => (editingFieldId === field.id ? fieldEditorHtml(field) : renderFieldRow(field, values[field.id], ctx)))
+    .join('');
+  const footer = addFieldFor === cat.id
+    ? addFieldFormHtml(cat)
+    : `<button type="button" class="add-field-btn" data-add-field-cat="${cat.id}">+ Add field</button>`;
   const accent = idx % 2 === 0 ? 'var(--cyan)' : 'var(--amber)';
 
   return `
@@ -721,7 +861,7 @@ function renderCategory(cat, values, idx, ctx) {
       </button>
       <div class="category-body" style="${isCollapsed ? 'display:none' : ''}">
         ${rows}
-        <button type="button" class="add-field-btn" data-add-field-cat="${cat.id}">+ Add field</button>
+        ${footer}
       </div>
     </div>
   `;
@@ -758,7 +898,7 @@ function renderFieldRow(field, rawValue, ctx) {
     const inputType = isDate ? 'date' : 'text';
     return `
       <div class="field-row">
-        <button type="button" class="field-label-btn" data-rename-field="${field.id}" data-current-label="${escapeHtml(field.label)}">${escapeHtml(field.label)}</button>
+        <button type="button" class="field-label-btn" data-edit-field="${field.id}" title="Click to rename or remove this field">${escapeHtml(field.label)}</button>
         <button type="button" class="field-value ${extra}" data-field-id="${field.id}" data-field-type="${inputType}" data-raw-value="${escapeHtml(value)}">${display}</button>
       </div>
     `;
@@ -774,7 +914,7 @@ function renderFieldRow(field, rawValue, ctx) {
         <button type="button" class="field-label-btn" data-long-toggle="${field.id}">${escapeHtml(field.label)}</button>
         <button type="button" class="field-value ${emptyClass}" data-field-id="${field.id}" data-field-type="text" data-raw-value="${escapeHtml(value)}">${preview}</button>
       </div>
-      ${isExpanded ? `<div class="long-full"><textarea data-field-id="${field.id}" data-field-type="long_text" placeholder="Full details…">${escapeHtml(value)}</textarea></div>` : ''}
+      ${isExpanded ? `<div class="long-full"><textarea data-field-id="${field.id}" data-field-type="long_text" placeholder="Full details…">${escapeHtml(value)}</textarea><button type="button" class="link-btn" data-edit-field="${field.id}">Edit field</button></div>` : ''}
     </div>
   `;
 }
@@ -802,52 +942,107 @@ function wireCategoryToggles(propertyId) {
     });
   });
 
-  app.querySelectorAll('[data-rename-field]').forEach((btn) => {
-    btn.addEventListener('click', () => renameField(btn, propertyId));
+}
+
+// Add / edit / remove fields and categories (the master checklist), all inline — no pop-up boxes.
+function wireTemplateEditing(propertyId) {
+  const rerender = () => rerenderPropertyPreservingScroll(propertyId);
+  const closeForms = () => { addFieldFor = null; editingFieldId = null; addCategoryOpen = false; };
+  const send = (url, method, body) => fetchJSON(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  app.querySelectorAll('[data-edit-field]').forEach((btn) => {
+    btn.addEventListener('click', () => { closeForms(); editingFieldId = Number(btn.dataset.editField); rerender(); });
   });
 
   app.querySelectorAll('[data-add-field-cat]').forEach((btn) => {
-    btn.addEventListener('click', () => addFieldPrompt(btn.dataset.addFieldCat, propertyId));
+    btn.addEventListener('click', () => { closeForms(); addFieldFor = Number(btn.dataset.addFieldCat); rerender(); });
   });
-}
 
-async function renameField(btn, propertyId) {
-  const fieldId = btn.dataset.renameField;
-  const current = btn.dataset.currentLabel || '';
-  const next = window.prompt('Rename this field:', current);
-  if (!next || !next.trim() || next.trim() === current) return;
-  try {
-    await fetchJSON(`/api/fields/${fieldId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ label: next.trim() })
-    });
-  } catch (err) {
-    window.alert('Could not rename field: ' + err.message);
-  }
-  rerenderPropertyPreservingScroll(propertyId);
-}
+  const addCategoryBtn = app.querySelector('#add-category-btn');
+  if (addCategoryBtn) addCategoryBtn.addEventListener('click', () => { closeForms(); addCategoryOpen = true; rerender(); });
 
-async function addFieldPrompt(categoryId, propertyId) {
-  const label = window.prompt('New field name:');
-  if (!label || !label.trim()) return;
-  const forAll = window.confirm(
-    'Add to ALL properties (this property\'s shared checklist)?\n\nOK = all properties\nCancel = this property only'
-  );
-  try {
-    await fetchJSON(`/api/categories/${categoryId}/fields`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        label: label.trim(),
-        scope: forAll ? 'all' : 'property',
-        property_id: propertyId
-      })
+  app.querySelectorAll('[data-cancel-form]').forEach((btn) => {
+    btn.addEventListener('click', () => { closeForms(); rerender(); });
+  });
+
+  app.querySelectorAll('[data-remove-field]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const label = btn.dataset.removeLabel;
+      const shared = !!btn.dataset.removeShared;
+      const question = shared
+        ? `Remove "${label}" from ALL properties? Anything already entered for it will be deleted.`
+        : `Remove "${label}" from this property?`;
+      if (!window.confirm(question)) return;
+      try {
+        await fetchJSON(`/api/fields/${btn.dataset.removeField}`, { method: 'DELETE' });
+        closeForms();
+      } catch (err) {
+        window.alert('Could not remove the field: ' + err.message);
+        return;
+      }
+      rerender();
     });
-  } catch (err) {
-    window.alert('Could not add field: ' + err.message);
+  });
+
+  app.querySelectorAll('form[data-field-editor]').forEach((form) => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await send(`/api/fields/${form.dataset.fieldEditor}`, 'PATCH', {
+          label: form.elements.label.value,
+          important: form.elements.important.checked
+        });
+        closeForms();
+      } catch (err) {
+        window.alert('Could not save the field: ' + err.message);
+        return;
+      }
+      rerender();
+    });
+  });
+
+  app.querySelectorAll('form[data-add-field-form]').forEach((form) => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await send(`/api/categories/${form.dataset.addFieldForm}/fields`, 'POST', {
+          label: form.elements.label.value,
+          field_type: form.elements.field_type.value,
+          scope: form.elements.scope ? form.elements.scope.value : 'property',
+          important: form.elements.important.checked,
+          property_id: propertyId
+        });
+        closeForms();
+      } catch (err) {
+        window.alert('Could not add the field: ' + err.message);
+        return;
+      }
+      rerender();
+    });
+  });
+
+  const addCategoryForm = app.querySelector('#add-category-form');
+  if (addCategoryForm) {
+    addCategoryForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await send('/api/categories', 'POST', {
+          title: addCategoryForm.elements.title.value,
+          scope: addCategoryForm.elements.scope.value,
+          property_id: propertyId
+        });
+        closeForms();
+      } catch (err) {
+        window.alert('Could not add the category: ' + err.message);
+        return;
+      }
+      rerender();
+    });
   }
-  rerenderPropertyPreservingScroll(propertyId);
 }
 
 function wireFieldEditing(propertyId) {
