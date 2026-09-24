@@ -6,8 +6,34 @@ const cookieParser = require('cookie-parser');
 const multer = require('multer');
 const db = require('./db');
 
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const SESSION_DAYS = 90;
+
 const app = express();
-app.use(express.json());
+app.set('trust proxy', 1); // Railway terminates HTTPS in front of the app
+app.disable('x-powered-by');
+
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'same-origin',
+    'Content-Security-Policy': [
+      "default-src 'self'",
+      "img-src 'self' data:",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      'font-src https://fonts.gstatic.com',
+      "script-src 'self'",
+      "connect-src 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'"
+    ].join('; ')
+  });
+  next();
+});
+
+app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 
 const STATUSES = ['Preparing', 'Active', 'Under Contract', 'Closed'];
@@ -27,8 +53,55 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 }
 });
 
-function sessionToken() {
-  return crypto.createHmac('sha256', process.env.APP_PASSWORD).update('agent-listingapp-session').digest('hex');
+// ----- Sign-in: random server-side sessions, rate-limited, constant-time password check -----
+
+function sha256(text) {
+  return crypto.createHash('sha256').update(String(text)).digest('hex');
+}
+
+function safeEqual(a, b) {
+  return crypto.timingSafeEqual(crypto.createHash('sha256').update(String(a)).digest(), crypto.createHash('sha256').update(String(b)).digest());
+}
+
+// Changing APP_PASSWORD changes this value, which signs out every existing session.
+function passwordFingerprint() {
+  return crypto.createHmac('sha256', 'agent-listingapp-fp').update(process.env.APP_PASSWORD).digest('hex');
+}
+
+function createSession() {
+  const token = crypto.randomBytes(32).toString('hex');
+  db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
+  db.prepare('INSERT INTO sessions (token_hash, pw_fp, expires_at) VALUES (?, ?, ?)')
+    .run(sha256(token), passwordFingerprint(), Date.now() + SESSION_DAYS * 86400000);
+  return token;
+}
+
+function sessionIsValid(token) {
+  if (!token || typeof token !== 'string') return false;
+  const row = db.prepare('SELECT pw_fp, expires_at FROM sessions WHERE token_hash = ?').get(sha256(token));
+  return !!row && row.expires_at > Date.now() && row.pw_fp === passwordFingerprint();
+}
+
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_FAILURES = 8;
+const loginFailures = new Map(); // ip -> { count, resetAt }
+
+function loginBlocked(ip) {
+  const entry = loginFailures.get(ip);
+  if (!entry) return false;
+  if (Date.now() > entry.resetAt) {
+    loginFailures.delete(ip);
+    return false;
+  }
+  return entry.count >= LOGIN_MAX_FAILURES;
+}
+
+function recordLoginFailure(ip) {
+  const now = Date.now();
+  if (loginFailures.size > 1000) loginFailures.clear();
+  const entry = loginFailures.get(ip);
+  if (!entry || now > entry.resetAt) loginFailures.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+  else entry.count += 1;
 }
 
 function loginPageHtml(error) {
@@ -54,7 +127,7 @@ button{width:100%;font:inherit;font-size:14px;font-weight:600;padding:10px;borde
 <div class="mark">AL</div>
 <h1>Agent listing app</h1>
 ${error ? `<p class="err">${error}</p>` : ''}
-<input type="password" name="password" placeholder="Password" autofocus>
+<input type="password" name="password" placeholder="Password" autocomplete="current-password" autofocus>
 <button type="submit">Sign in</button>
 </form>
 </body>
@@ -70,22 +143,42 @@ app.get('/login', (req, res) => {
 });
 
 app.post('/login', express.urlencoded({ extended: false }), (req, res) => {
-  if (!process.env.APP_PASSWORD || req.body.password !== process.env.APP_PASSWORD) {
-    return res.type('html').send(loginPageHtml('Wrong password. Try again.'));
+  if (loginBlocked(req.ip)) {
+    return res.status(429).type('html').send(loginPageHtml('Too many attempts. Try again in 15 minutes.'));
   }
-  res.cookie('session', sessionToken(), {
+  const supplied = req.body && typeof req.body.password === 'string' ? req.body.password : '';
+  if (!process.env.APP_PASSWORD || !safeEqual(supplied, process.env.APP_PASSWORD)) {
+    recordLoginFailure(req.ip);
+    return res.status(401).type('html').send(loginPageHtml('Wrong password. Try again.'));
+  }
+  loginFailures.delete(req.ip);
+  res.cookie('session', createSession(), {
     httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24 * 90,
+    secure: req.secure,
+    maxAge: SESSION_DAYS * 86400000,
     sameSite: 'lax'
   });
   res.redirect('/');
 });
 
+// The gate. In production a missing APP_PASSWORD locks the app instead of opening it.
 app.use((req, res, next) => {
-  if (!process.env.APP_PASSWORD) return next(); // not configured yet — no gate
-  if (req.cookies && req.cookies.session === sessionToken()) return next();
+  if (!process.env.APP_PASSWORD) {
+    if (!IS_PRODUCTION) return next(); // local development only
+    const message = 'The app is locked: APP_PASSWORD is not set on the server.';
+    if (req.path.startsWith('/api/')) return res.status(503).json({ error: message });
+    return res.status(503).type('text').send(message);
+  }
+  if (sessionIsValid(req.cookies && req.cookies.session)) return next();
   if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Not authenticated' });
   return res.redirect('/login');
+});
+
+app.post('/logout', (req, res) => {
+  const token = req.cookies && req.cookies.session;
+  if (token) db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token));
+  res.clearCookie('session');
+  res.json({ ok: true });
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -239,10 +332,16 @@ app.patch('/api/properties/:id', (req, res) => {
   const property = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
   if (!property) return res.status(404).json({ error: 'Not found' });
 
+  if (req.body.status !== undefined && !STATUSES.includes(req.body.status)) {
+    return res.status(400).json({ error: 'Status must be one of: ' + STATUSES.join(', ') });
+  }
+  const address = req.body.address !== undefined ? cleanText(req.body.address) : property.address;
+  if (!address) return res.status(400).json({ error: 'Address is required' });
+
   const next = {
-    address: req.body.address !== undefined ? req.body.address : property.address,
+    address,
     status: req.body.status !== undefined ? req.body.status : property.status,
-    list_price: req.body.list_price !== undefined ? req.body.list_price : property.list_price,
+    list_price: req.body.list_price !== undefined ? cleanText(req.body.list_price) : property.list_price,
     archived: req.body.archived !== undefined ? (req.body.archived ? 1 : 0) : property.archived
   };
 
@@ -292,16 +391,32 @@ app.delete('/api/properties/:id', (req, res) => {
 
 // ----- Property cover photo -----
 
+// The file type is decided from the file's own bytes, never from the name or type the browser claims.
+const IMAGE_SIGNATURES = {
+  jpg: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  png: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  gif: (b) => b.subarray(0, 4).toString('latin1') === 'GIF8',
+  webp: (b) => b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP'
+};
+const IMAGE_MIME = { jpg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' };
+
+function sniffImageType(filePath) {
+  const buf = Buffer.alloc(12);
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    fs.readSync(fd, buf, 0, 12, 0);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return Object.keys(IMAGE_SIGNATURES).find((type) => IMAGE_SIGNATURES[type](buf)) || null;
+}
+
 const photoUpload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, db.uploadsDir),
-    filename: (req, file, cb) => {
-      const safeExt = (path.extname(file.originalname) || '.jpg').slice(0, 8);
-      cb(null, `photo-${Date.now()}-${crypto.randomBytes(6).toString('hex')}${safeExt}`);
-    }
+    filename: (req, file, cb) => cb(null, `photo-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.upload`)
   }),
-  limits: { fileSize: 12 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => cb(null, /^image\//.test(file.mimetype))
+  limits: { fileSize: 12 * 1024 * 1024 }
 });
 
 app.post('/api/properties/:id/photo', photoUpload.single('photo'), (req, res) => {
@@ -312,16 +427,30 @@ app.post('/api/properties/:id/photo', photoUpload.single('photo'), (req, res) =>
   }
   if (!req.file) return res.status(400).json({ error: 'Choose an image file' });
 
+  const type = sniffImageType(req.file.path);
+  if (!type) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: 'That file is not a JPEG, PNG, GIF or WebP image' });
+  }
+  const finalName = req.file.filename.replace(/\.upload$/, `.${type}`);
+  fs.renameSync(req.file.path, path.join(db.uploadsDir, finalName));
+
   if (property.photo_name) fs.unlink(path.join(db.uploadsDir, property.photo_name), () => {});
-  db.prepare("UPDATE properties SET photo_name = ?, updated_at = datetime('now') WHERE id = ?").run(req.file.filename, property.id);
-  res.json({ photo_name: req.file.filename });
+  db.prepare("UPDATE properties SET photo_name = ?, updated_at = datetime('now') WHERE id = ?").run(finalName, property.id);
+  res.json({ photo_name: finalName });
 });
 
 app.get('/api/properties/:id/photo', (req, res) => {
   const property = db.prepare('SELECT photo_name FROM properties WHERE id = ?').get(req.params.id);
   if (!property || !property.photo_name) return res.status(404).json({ error: 'No photo' });
-  // The URL carries ?v=<file name>, so a replaced photo always gets a new URL and this can be cached hard.
-  res.set('Cache-Control', 'private, max-age=31536000, immutable');
+  const type = path.extname(property.photo_name).slice(1);
+  res.set({
+    'Content-Type': IMAGE_MIME[type] || 'application/octet-stream',
+    'Content-Disposition': 'inline',
+    'Content-Security-Policy': "default-src 'none'; sandbox",
+    // The URL carries ?v=<file name>, so a replaced photo always gets a new URL and this can be cached hard.
+    'Cache-Control': 'private, max-age=31536000, immutable'
+  });
   res.sendFile(path.join(db.uploadsDir, property.photo_name));
 });
 
@@ -562,6 +691,10 @@ app.delete('/api/notes/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -570,9 +703,17 @@ app.use((err, req, res, next) => {
   if (err && err.code === 'LIMIT_FILE_SIZE') {
     return res.status(413).json({ error: 'That file is too large' });
   }
+  // Client mistakes from body parsing (too large, malformed JSON) are 4xx, not server errors.
+  if (err && err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ error: err.status === 413 ? 'That request is too large' : 'Bad request' });
+  }
   console.error(err);
   res.status(500).json({ error: 'Something went wrong on the server' });
 });
+
+if (IS_PRODUCTION && !process.env.APP_PASSWORD) {
+  console.error('WARNING: APP_PASSWORD is not set. The app will refuse all requests until it is configured.');
+}
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {

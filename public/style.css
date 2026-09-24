@@ -102,6 +102,22 @@ button.appbar-title:hover { background: rgba(255, 255, 255, 0.08); }
 .appbar-back:hover { background: rgba(34, 211, 238, 0.12); }
 .appbar-back .icon { width: 18px; height: 18px; }
 
+.appbar-signout {
+  margin-inline-start: auto;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #b9c7de;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 10px;
+  padding: 6px 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.appbar-signout:hover { color: #fff; border-color: rgba(255, 255, 255, 0.5); }
+
 .appbar-input {
   font: inherit;
   font-size: 17px;

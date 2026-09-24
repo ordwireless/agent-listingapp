@@ -1,5 +1,20 @@
 const app = document.getElementById('app');
 
+// Every screen draw takes a ticket; a slow response from an older draw is dropped instead of painting over a newer screen.
+let renderToken = 0;
+
+app.addEventListener('click', (e) => {
+  if (e.target.closest('#signout-btn')) signOut();
+});
+
+async function signOut() {
+  try {
+    await fetch('/logout', { method: 'POST' });
+  } finally {
+    window.location.assign('/login');
+  }
+}
+
 // ---------- helpers ----------
 
 function statusBadgeClass(status) {
@@ -110,6 +125,7 @@ function appbarHtml(opts) {
         <div class="appbar-inner">
           <button type="button" class="appbar-back" id="back-btn" aria-label="Back to properties">${iconSvg('back')}</button>
           <button type="button" class="appbar-title" id="address-btn" data-raw-value="${escapeHtml(opts.title)}" title="Click to edit the address">${escapeHtml(opts.title)}</button>
+          <button type="button" class="appbar-signout" id="signout-btn">Sign out</button>
         </div>
       </header>
     `;
@@ -119,6 +135,7 @@ function appbarHtml(opts) {
       <div class="appbar-inner">
         <span class="appbar-mark">AL</span>
         <span class="appbar-title static">${escapeHtml((opts && opts.title) || 'My properties')}</span>
+        <button type="button" class="appbar-signout" id="signout-btn">Sign out</button>
       </div>
     </header>
   `;
@@ -142,6 +159,7 @@ function render() {
 let homeTab = 'active';
 
 async function renderHome() {
+  const token = ++renderToken;
   app.innerHTML = `
     ${appbarHtml({ title: 'My properties' })}
     <div class="page">
@@ -166,6 +184,7 @@ async function renderHome() {
 
   fetchJSON('/api/stats')
     .then((stats) => {
+      if (token !== renderToken) return;
       const statsEl = app.querySelector('#stats');
       if (!statsEl) return;
       statsEl.innerHTML = `
@@ -180,6 +199,7 @@ async function renderHome() {
   const cardsEl = app.querySelector('#cards');
   try {
     const properties = await fetchJSON(`/api/properties?archived=${homeTab === 'archive' ? '1' : '0'}`);
+    if (token !== renderToken) return;
     if (properties.length === 0) {
       cardsEl.innerHTML = `<p class="empty">${homeTab === 'archive' ? 'No archived properties.' : 'No properties yet. Add your first one below.'}</p>`;
       return;
@@ -189,6 +209,7 @@ async function renderHome() {
       el.addEventListener('click', () => navigate(`#/property/${el.dataset.id}`));
     });
   } catch (err) {
+    if (token !== renderToken) return;
     cardsEl.innerHTML = `<p class="empty text-red">Could not load properties: ${escapeHtml(err.message)}</p>`;
   }
 }
@@ -330,7 +351,9 @@ function summaryStrip(property, template, values) {
   return `<div class="strip">${missingCard}${dateCard}</div>`;
 }
 
+// Returns true when this call painted the page, false when a newer draw took over or loading failed.
 async function renderPropertyPage(id) {
+  const token = ++renderToken;
   app.innerHTML = `${appbarHtml({ title: 'Loading…' })}<div class="page"><p class="empty">Loading…</p></div>`;
 
   if (uiPropertyId !== id) {
@@ -358,9 +381,11 @@ async function renderPropertyPage(id) {
       fetchJSON(`/api/properties/${id}/notes`)
     ]);
   } catch (err) {
+    if (token !== renderToken) return false;
     app.innerHTML = `${appbarHtml({ title: 'Error' })}<div class="page"><p class="empty text-red">Could not load property: ${escapeHtml(err.message)}</p></div>`;
-    return;
+    return false;
   }
+  if (token !== renderToken) return false; // the user went elsewhere, or a newer draw started, while this loaded
 
   const { property, template, values, statuses } = data;
 
@@ -520,6 +545,7 @@ async function renderPropertyPage(id) {
   wireDocumentDeletes(property.id);
   wireCategoryToggles(property.id);
   wireFieldEditing(property.id);
+  return true;
 }
 
 // ---------- Contacts ----------
@@ -920,9 +946,12 @@ function renderFieldRow(field, rawValue, ctx) {
 }
 
 async function rerenderPropertyPreservingScroll(propertyId) {
+  // A save that finishes after the user already went back to Home must not draw the property page again.
+  const onThisProperty = window.location.hash.match(/^#\/property\/(\d+)/);
+  if (!onThisProperty || Number(onThisProperty[1]) !== Number(propertyId)) return;
   const scrollY = window.scrollY;
-  await renderPropertyPage(propertyId);
-  window.scrollTo(0, scrollY);
+  const painted = await renderPropertyPage(propertyId);
+  if (painted) window.scrollTo(0, scrollY);
 }
 
 function wireCategoryToggles(propertyId) {

@@ -76,6 +76,12 @@ CREATE TABLE IF NOT EXISTS contacts (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  pw_fp TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
