@@ -85,6 +85,8 @@ function navigate(hash) {
 const ICONS = {
   back: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
   file: '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4"/>',
+  note: '<path d="M5 4h14v16H5z"/><path d="M8.5 9h7M8.5 13h7M8.5 17h4"/>',
+  phone: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z"/>',
   structure: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v9h14v-9"/><path d="M9.5 19v-5h5v5"/>',
   systems: '<path d="M13 2 4 14h6l-1 8 9-12h-6l1-8Z"/>',
   utilities: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11Z"/>',
@@ -242,6 +244,11 @@ async function addPropertyPrompt() {
 const collapsedCategories = {};
 const expandedLongFields = {};
 
+// Per-property UI state (reset when you open a different property).
+let uiPropertyId = null;
+let contactFormId = null; // 'new' | contact id | null
+let expandedNotes = {};
+
 function valueByKey(template, values, key) {
   for (const cat of template) {
     for (const f of cat.fields) {
@@ -294,14 +301,26 @@ function summaryStrip(property, template, values) {
 async function renderPropertyPage(id) {
   app.innerHTML = `${appbarHtml({ title: 'Loading…' })}<div class="page"><p class="empty">Loading…</p></div>`;
 
+  if (uiPropertyId !== id) {
+    uiPropertyId = id;
+    contactFormId = null;
+    expandedNotes = {};
+  }
+
   let data;
   let documents = [];
   let docTypes = [];
+  let contacts = [];
+  let contactRoles = [];
+  let notes = [];
   try {
-    [data, documents, docTypes] = await Promise.all([
+    [data, documents, docTypes, contacts, contactRoles, notes] = await Promise.all([
       fetchJSON(`/api/properties/${id}`),
       fetchJSON(`/api/properties/${id}/documents`),
-      fetchJSON('/api/document-types')
+      fetchJSON('/api/document-types'),
+      fetchJSON(`/api/properties/${id}/contacts`),
+      fetchJSON('/api/contact-roles'),
+      fetchJSON(`/api/properties/${id}/notes`)
     ]);
   } catch (err) {
     app.innerHTML = `${appbarHtml({ title: 'Error' })}<div class="page"><p class="empty text-red">Could not load property: ${escapeHtml(err.message)}</p></div>`;
@@ -315,13 +334,17 @@ async function renderPropertyPage(id) {
     .join('');
 
   const ctx = { status: property.status, today: todayISO() };
-  const categoriesHtml = template.map((cat, idx) => renderCategory(cat, values, idx, ctx)).join('');
+  // The old text-only "Contacts" category is replaced by the real Contacts section below.
+  const visibleTemplate = template.filter((c) => c.key !== 'contacts');
+  const categoriesHtml = visibleTemplate.map((cat, idx) => renderCategory(cat, values, idx, ctx)).join('');
   const price = valueByKey(template, values, 'price');
-  const datesCat = template.find((c) => c.key === 'dates');
+  const datesCat = visibleTemplate.find((c) => c.key === 'dates');
 
   const jumpChips = [
     ['top', 'Quick view'],
     datesCat ? [`cat-${datesCat.id}`, 'Dates'] : null,
+    ['sec-contacts', 'Contacts'],
+    ['sec-notes', 'Notes'],
     ['sec-docs', 'Documents']
   ].filter(Boolean);
 
@@ -348,6 +371,9 @@ async function renderPropertyPage(id) {
 
       <div id="categories">${categoriesHtml}</div>
       <button class="add-category-btn" id="add-category-btn">+ Add category</button>
+
+      ${renderContactsSection(contacts, contactRoles)}
+      ${renderNotesSection(notes)}
 
       <div class="category" id="sec-docs" style="--accent:var(--cyan)">
         <div class="category-header static">
@@ -418,9 +444,237 @@ async function renderPropertyPage(id) {
     });
   });
 
+  wireContacts(property.id);
+  wireNotes(property.id);
   wireDocumentDeletes(property.id);
   wireCategoryToggles(property.id);
   wireFieldEditing(property.id);
+}
+
+// ---------- Contacts ----------
+
+const ROLE_TONE = {
+  'Seller': 'cyan',
+  'Buyer': 'amber',
+  'Buyer Agent': 'amber',
+  'Closing Attorney': 'cyan',
+  'Lender': 'cyan'
+};
+
+function phoneHref(phone) {
+  const digits = String(phone || '').replace(/[^\d+]/g, '');
+  return digits ? `tel:${digits}` : '';
+}
+
+function renderContactForm(contact, roles) {
+  const c = contact || { role: 'Seller', name: '', phone: '', email: '', notes: '' };
+  return `
+    <form class="contact-form" data-contact-form="${contact ? contact.id : 'new'}">
+      <div class="form-row">
+        <select name="role" aria-label="Role">${roles.map((r) => `<option value="${escapeHtml(r)}" ${r === c.role ? 'selected' : ''}>${escapeHtml(r)}</option>`).join('')}</select>
+        <input name="name" type="text" placeholder="Name" value="${escapeHtml(c.name)}" required>
+      </div>
+      <div class="form-row">
+        <input name="phone" type="tel" placeholder="Phone" value="${escapeHtml(c.phone)}">
+        <input name="email" type="email" placeholder="Email" value="${escapeHtml(c.email)}">
+      </div>
+      <textarea name="notes" placeholder="Notes (optional)">${escapeHtml(c.notes)}</textarea>
+      <div class="form-actions">
+        <button type="submit" class="upload-btn">Save</button>
+        <button type="button" class="link-btn" data-cancel-contact>Cancel</button>
+        ${contact ? `<button type="button" class="doc-delete-btn" data-delete-contact="${contact.id}">Delete</button>` : ''}
+      </div>
+    </form>
+  `;
+}
+
+function renderContactRow(c, roles) {
+  if (contactFormId === c.id) return renderContactForm(c, roles);
+  const tone = ROLE_TONE[c.role] || 'gray';
+  const href = phoneHref(c.phone);
+  const meta = [
+    c.phone ? `<a href="${href}">${escapeHtml(c.phone)}</a>` : '',
+    c.email ? `<a href="mailto:${escapeHtml(c.email)}">${escapeHtml(c.email)}</a>` : ''
+  ].filter(Boolean).join('');
+  return `
+    <div class="contact-row">
+      <div class="contact-main">
+        <span class="role-chip role-${tone}">${escapeHtml(c.role)}</span>
+        <div class="contact-name">${escapeHtml(c.name)}</div>
+        ${meta ? `<div class="contact-meta">${meta}</div>` : ''}
+        ${c.notes ? `<div class="contact-notes">${escapeHtml(c.notes)}</div>` : ''}
+      </div>
+      ${href ? `<a class="call-btn" href="${href}" aria-label="Call ${escapeHtml(c.name)}">${iconSvg('phone')}</a>` : ''}
+      <button type="button" class="link-btn" data-edit-contact="${c.id}">Edit</button>
+    </div>
+  `;
+}
+
+function renderContactsSection(contacts, roles) {
+  const rows = contacts.length === 0 && contactFormId !== 'new'
+    ? '<p class="empty" style="padding:8px 0">No contacts yet.</p>'
+    : contacts.map((c) => renderContactRow(c, roles)).join('');
+  const footer = contactFormId === 'new'
+    ? renderContactForm(null, roles)
+    : '<button type="button" class="add-field-btn" id="add-contact-btn">+ Add contact</button>';
+  return `
+    <div class="category" id="sec-contacts" style="--accent:var(--amber)">
+      <div class="category-header static">
+        <span class="category-title-wrap">${iconSvg('contacts', 'category-icon')}<span class="category-title">Contacts</span></span>
+      </div>
+      <div class="category-body">${rows}${footer}</div>
+    </div>
+  `;
+}
+
+function wireContacts(propertyId) {
+  const addBtn = app.querySelector('#add-contact-btn');
+  if (addBtn) addBtn.addEventListener('click', () => { contactFormId = 'new'; rerenderPropertyPreservingScroll(propertyId); });
+
+  app.querySelectorAll('[data-edit-contact]').forEach((btn) => {
+    btn.addEventListener('click', () => { contactFormId = Number(btn.dataset.editContact); rerenderPropertyPreservingScroll(propertyId); });
+  });
+
+  app.querySelectorAll('[data-cancel-contact]').forEach((btn) => {
+    btn.addEventListener('click', () => { contactFormId = null; rerenderPropertyPreservingScroll(propertyId); });
+  });
+
+  app.querySelectorAll('[data-delete-contact]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!window.confirm('Delete this contact?')) return;
+      await fetchJSON(`/api/contacts/${btn.dataset.deleteContact}`, { method: 'DELETE' });
+      contactFormId = null;
+      rerenderPropertyPreservingScroll(propertyId);
+    });
+  });
+
+  app.querySelectorAll('.contact-form').forEach((form) => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(form).entries());
+      const id = form.dataset.contactForm;
+      try {
+        if (id === 'new') {
+          await fetchJSON(`/api/properties/${propertyId}/contacts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+        } else {
+          await fetchJSON(`/api/contacts/${id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+        }
+        contactFormId = null;
+      } catch (err) {
+        window.alert('Could not save contact: ' + err.message);
+        return;
+      }
+      rerenderPropertyPreservingScroll(propertyId);
+    });
+  });
+}
+
+// ---------- Notes ----------
+
+function renderNotesSection(notes) {
+  const cards = notes.length === 0
+    ? '<p class="empty" style="padding:8px 0">No notes yet.</p>'
+    : notes.map((n) => {
+      const open = !!expandedNotes[n.id];
+      return `
+        <div class="note-card">
+          <button type="button" class="note-head" data-note-toggle="${n.id}" aria-expanded="${open}">
+            <span class="note-title">${escapeHtml(n.title)}</span>
+            <span class="note-toggle">${open ? 'Close' : 'Open'}</span>
+          </button>
+          ${open ? `
+            <div class="note-body">
+              <textarea data-note-body="${n.id}" placeholder="Write here…">${escapeHtml(n.body)}</textarea>
+              <div class="note-actions">
+                <button type="button" class="link-btn" data-note-rename="${n.id}" data-note-title="${escapeHtml(n.title)}">Rename</button>
+                <button type="button" class="doc-delete-btn" data-note-delete="${n.id}">Delete</button>
+              </div>
+            </div>` : ''}
+        </div>
+      `;
+    }).join('');
+  return `
+    <div class="category" id="sec-notes" style="--accent:var(--amber)">
+      <div class="category-header static">
+        <span class="category-title-wrap">${iconSvg('note', 'category-icon')}<span class="category-title">Notes</span></span>
+      </div>
+      <div class="category-body">${cards}<button type="button" class="add-field-btn" id="add-note-btn">+ New note</button></div>
+    </div>
+  `;
+}
+
+function wireNotes(propertyId) {
+  app.querySelector('#add-note-btn').addEventListener('click', async () => {
+    const title = window.prompt('Note title:');
+    if (!title || !title.trim()) return;
+    try {
+      const note = await fetchJSON(`/api/properties/${propertyId}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: title.trim(), body: '' })
+      });
+      expandedNotes[note.id] = true;
+    } catch (err) {
+      window.alert('Could not add note: ' + err.message);
+    }
+    rerenderPropertyPreservingScroll(propertyId);
+  });
+
+  app.querySelectorAll('[data-note-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.noteToggle;
+      expandedNotes[id] = !expandedNotes[id];
+      rerenderPropertyPreservingScroll(propertyId);
+    });
+  });
+
+  // Saves quietly (no re-render) so a click on Rename/Delete right after typing is not lost.
+  app.querySelectorAll('[data-note-body]').forEach((ta) => {
+    ta.addEventListener('blur', async () => {
+      try {
+        await fetchJSON(`/api/notes/${ta.dataset.noteBody}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body: ta.value })
+        });
+      } catch (err) {
+        window.alert('Could not save note: ' + err.message);
+      }
+    });
+  });
+
+  app.querySelectorAll('[data-note-rename]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const next = window.prompt('Rename this note:', btn.dataset.noteTitle || '');
+      if (!next || !next.trim()) return;
+      try {
+        await fetchJSON(`/api/notes/${btn.dataset.noteRename}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: next.trim() })
+        });
+      } catch (err) {
+        window.alert('Could not rename note: ' + err.message);
+      }
+      rerenderPropertyPreservingScroll(propertyId);
+    });
+  });
+
+  app.querySelectorAll('[data-note-delete]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!window.confirm('Delete this note?')) return;
+      await fetchJSON(`/api/notes/${btn.dataset.noteDelete}`, { method: 'DELETE' });
+      rerenderPropertyPreservingScroll(propertyId);
+    });
+  });
 }
 
 function startEditingAddress(btn, propertyId) {

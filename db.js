@@ -12,6 +12,8 @@ const db = new Database(path.join(dataDir, 'app.db'));
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+const contactsTableExisted = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'contacts'").get();
+
 db.exec(`
 CREATE TABLE IF NOT EXISTS categories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,7 +62,50 @@ CREATE TABLE IF NOT EXISTS documents (
   size INTEGER,
   uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS contacts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'Other',
+  name TEXT NOT NULL,
+  phone TEXT,
+  email TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
+
+// One-time migration: names typed into the old text-only "Contacts" category become real contact records.
+if (!contactsTableExisted) {
+  const roleForLabel = {
+    'Seller': 'Seller',
+    'Buyer': 'Buyer',
+    'Closing attorney': 'Closing Attorney',
+    'Lender': 'Lender',
+    'HOA': 'HOA Contact'
+  };
+  const oldValues = db.prepare(`
+    SELECT pfv.property_id AS property_id, f.label AS label, pfv.value AS value
+    FROM property_field_values pfv
+    JOIN fields f ON f.id = pfv.field_id
+    JOIN categories c ON c.id = f.category_id
+    WHERE c.key = 'contacts' AND pfv.value IS NOT NULL AND TRIM(pfv.value) <> ''
+    ORDER BY pfv.property_id, f.sort_order
+  `).all();
+  const insertContact = db.prepare('INSERT INTO contacts (property_id, role, name) VALUES (?, ?, ?)');
+  oldValues.forEach((row) => {
+    insertContact.run(row.property_id, roleForLabel[row.label] || 'Other', row.value.trim());
+  });
+}
 
 // Migration: add updated_at to properties created before this column existed.
 const propertyColumns = db.prepare("PRAGMA table_info(properties)").all().map((c) => c.name);

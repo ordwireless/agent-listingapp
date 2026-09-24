@@ -363,6 +363,112 @@ app.delete('/api/documents/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+const CONTACT_ROLES = [
+  'Seller', 'Buyer', 'Buyer Agent', 'Closing Attorney', 'Lender', 'HOA Contact', 'Contractor', 'Other'
+];
+
+function touchProperty(propertyId) {
+  db.prepare("UPDATE properties SET updated_at = datetime('now') WHERE id = ?").run(propertyId);
+}
+
+function cleanText(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+app.get('/api/contact-roles', (req, res) => {
+  res.json(CONTACT_ROLES);
+});
+
+app.get('/api/properties/:id/contacts', (req, res) => {
+  const rows = db.prepare('SELECT * FROM contacts WHERE property_id = ? ORDER BY id').all(Number(req.params.id));
+  res.json(rows);
+});
+
+app.post('/api/properties/:id/contacts', (req, res) => {
+  const propertyId = Number(req.params.id);
+  const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(propertyId);
+  if (!property) return res.status(404).json({ error: 'Property not found' });
+
+  const name = cleanText(req.body.name);
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  const role = CONTACT_ROLES.includes(req.body.role) ? req.body.role : 'Other';
+
+  const info = db.prepare(
+    'INSERT INTO contacts (property_id, role, name, phone, email, notes) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(propertyId, role, name, cleanText(req.body.phone), cleanText(req.body.email), cleanText(req.body.notes));
+  touchProperty(propertyId);
+
+  res.status(201).json(db.prepare('SELECT * FROM contacts WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.patch('/api/contacts/:id', (req, res) => {
+  const contact = db.prepare('SELECT * FROM contacts WHERE id = ?').get(req.params.id);
+  if (!contact) return res.status(404).json({ error: 'Not found' });
+
+  const name = req.body.name !== undefined ? cleanText(req.body.name) : contact.name;
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  const role = req.body.role !== undefined && CONTACT_ROLES.includes(req.body.role) ? req.body.role : contact.role;
+  const phone = req.body.phone !== undefined ? cleanText(req.body.phone) : contact.phone;
+  const email = req.body.email !== undefined ? cleanText(req.body.email) : contact.email;
+  const notes = req.body.notes !== undefined ? cleanText(req.body.notes) : contact.notes;
+
+  db.prepare('UPDATE contacts SET role = ?, name = ?, phone = ?, email = ?, notes = ? WHERE id = ?')
+    .run(role, name, phone, email, notes, contact.id);
+  touchProperty(contact.property_id);
+
+  res.json(db.prepare('SELECT * FROM contacts WHERE id = ?').get(contact.id));
+});
+
+app.delete('/api/contacts/:id', (req, res) => {
+  const contact = db.prepare('SELECT * FROM contacts WHERE id = ?').get(req.params.id);
+  if (!contact) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM contacts WHERE id = ?').run(contact.id);
+  touchProperty(contact.property_id);
+  res.json({ ok: true });
+});
+
+app.get('/api/properties/:id/notes', (req, res) => {
+  const rows = db.prepare('SELECT * FROM notes WHERE property_id = ? ORDER BY id').all(Number(req.params.id));
+  res.json(rows);
+});
+
+app.post('/api/properties/:id/notes', (req, res) => {
+  const propertyId = Number(req.params.id);
+  const property = db.prepare('SELECT id FROM properties WHERE id = ?').get(propertyId);
+  if (!property) return res.status(404).json({ error: 'Property not found' });
+
+  const title = cleanText(req.body.title);
+  if (!title) return res.status(400).json({ error: 'Title is required' });
+
+  const info = db.prepare('INSERT INTO notes (property_id, title, body) VALUES (?, ?, ?)')
+    .run(propertyId, title, typeof req.body.body === 'string' ? req.body.body : '');
+  touchProperty(propertyId);
+
+  res.status(201).json(db.prepare('SELECT * FROM notes WHERE id = ?').get(info.lastInsertRowid));
+});
+
+app.patch('/api/notes/:id', (req, res) => {
+  const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(req.params.id);
+  if (!note) return res.status(404).json({ error: 'Not found' });
+
+  const title = req.body.title !== undefined ? cleanText(req.body.title) : note.title;
+  if (!title) return res.status(400).json({ error: 'Title is required' });
+  const body = typeof req.body.body === 'string' ? req.body.body : note.body;
+
+  db.prepare("UPDATE notes SET title = ?, body = ?, updated_at = datetime('now') WHERE id = ?").run(title, body, note.id);
+  touchProperty(note.property_id);
+
+  res.json(db.prepare('SELECT * FROM notes WHERE id = ?').get(note.id));
+});
+
+app.delete('/api/notes/:id', (req, res) => {
+  const note = db.prepare('SELECT * FROM notes WHERE id = ?').get(req.params.id);
+  if (!note) return res.status(404).json({ error: 'Not found' });
+  db.prepare('DELETE FROM notes WHERE id = ?').run(note.id);
+  touchProperty(note.property_id);
+  res.json({ ok: true });
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
