@@ -301,6 +301,186 @@ let expandedNotes = {};
 let addFieldFor = null; // category id whose "add field" form is open
 let editingFieldId = null; // field id whose editor is open
 let addCategoryOpen = false;
+let sendPanel = { open: false, name: '', selected: null, text: '', edited: false };
+
+// ---------- Send questions (to a contractor, the seller, anyone who knows the house) ----------
+
+const QUESTION_TEXT = {
+  roof: 'Roof: year installed (or approximate age)?',
+  hvac_unit_1: 'HVAC unit 1: year installed (or approximate age) and type?',
+  hvac_unit_2: 'HVAC unit 2 (if there is one): year installed and type?',
+  water_heater: 'Water heater: year installed (or approximate age), gas or electric, tank size?',
+  fireplace: 'Fireplace: gas, wood or electric?',
+  foundation: 'Foundation: slab, crawl space or basement?',
+  construction: 'Construction type (brick, siding, stone…)?',
+  water: 'Water: city or well?',
+  sewer: 'Sewer: city or septic?',
+  gas: 'Gas: natural gas, propane or none?',
+  hoa: 'HOA: how much, and how often is it paid?',
+  restrictive_covenants: 'Any restrictive covenants?',
+  flood_zone: 'Is the property in a flood zone?',
+  year_built: 'Year built?',
+  sqft: 'Square footage?',
+  beds_baths: 'Bedrooms and bathrooms?',
+  major_updates: 'Major updates or renovations (what and when)?'
+};
+
+function questionFor(field) {
+  return QUESTION_TEXT[field.key] || `${field.label}?`;
+}
+
+// Empty fields that make sense to ask about. Dates, the price and the old contacts category are left out.
+function sendCandidates(template, values) {
+  return template
+    .filter((c) => c.key !== 'contacts')
+    .map((c) => ({
+      title: c.title,
+      fields: c.fields.filter((f) => f.field_type !== 'date' && f.key !== 'price' && !values[f.id])
+    }))
+    .filter((c) => c.fields.length > 0);
+}
+
+function buildMessage(property, cands, selectedIds, name) {
+  const lines = [];
+  cands.forEach((c) => c.fields.forEach((f) => {
+    if (selectedIds.has(f.id)) lines.push(questionFor(f));
+  }));
+  if (lines.length === 0) return '';
+  const greeting = name ? `Hi ${name},` : 'Hi,';
+  return `${greeting}\nI'm getting ${property.address} ready to list. Could you tell me:\n\n${lines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\nThank you!`;
+}
+
+function renderSendPanel(property, template, values) {
+  if (!sendPanel.open) return '';
+  const cands = sendCandidates(template, values);
+  const all = cands.flatMap((c) => c.fields);
+  if (!sendPanel.selected) sendPanel.selected = new Set(all.filter((f) => f.important).map((f) => f.id));
+  const valid = new Set(all.map((f) => f.id));
+  sendPanel.selected = new Set([...sendPanel.selected].filter((id) => valid.has(id)));
+  if (!sendPanel.edited) sendPanel.text = buildMessage(property, cands, sendPanel.selected, sendPanel.name);
+
+  const groups = cands.map((c) => `
+    <div class="send-cat">
+      <div class="send-cat-title">${escapeHtml(c.title)}</div>
+      ${c.fields.map((f) => `
+        <label class="send-item">
+          <input type="checkbox" data-send-field="${f.id}" ${sendPanel.selected.has(f.id) ? 'checked' : ''}>
+          <span>${escapeHtml(f.label)}</span>${f.important ? '<span class="send-imp">Missing</span>' : ''}
+        </label>`).join('')}
+    </div>`).join('');
+
+  return `
+    <section class="send-panel" id="send-panel" aria-label="Send questions">
+      <div class="send-head">
+        <h2 class="send-title">Send questions</h2>
+        <button type="button" class="link-btn" id="send-close">Close</button>
+      </div>
+      <p class="send-help">Pick what you want answered. The message updates as you choose, and you can edit it before sending.</p>
+      <input id="send-name" type="text" placeholder="Their first name (optional)" value="${escapeHtml(sendPanel.name)}" aria-label="Their first name">
+      ${all.length === 0 ? '<p class="empty" style="padding:8px 0">Every field already has an answer, so there is nothing left to ask.</p>' : `
+        <div class="send-quick">
+          <button type="button" class="link-btn" id="send-important">Only missing</button>
+          <button type="button" class="link-btn" id="send-all">Select all</button>
+          <button type="button" class="link-btn" id="send-none">Clear</button>
+        </div>
+        <div class="send-groups">${groups}</div>`}
+      <textarea id="send-text" aria-label="Message">${escapeHtml(sendPanel.text)}</textarea>
+      <div class="send-actions">
+        <button type="button" class="upload-btn" id="send-share" hidden>Share…</button>
+        <a class="send-link" id="send-wa" target="_blank" rel="noopener">WhatsApp</a>
+        <a class="send-link" id="send-sms">Text message</a>
+        <a class="send-link" id="send-mail">Email</a>
+        <button type="button" class="send-link" id="send-copy">Copy</button>
+        <button type="button" class="link-btn" id="send-rebuild" ${sendPanel.edited ? '' : 'hidden'}>Rebuild message</button>
+      </div>
+      <p class="upload-status" id="send-status" role="status" aria-live="polite"></p>
+    </section>
+  `;
+}
+
+function wireSendPanel(property, template, values) {
+  app.querySelector('#send-toggle').addEventListener('click', () => {
+    sendPanel.open = !sendPanel.open;
+    if (sendPanel.open) { sendPanel.selected = null; sendPanel.edited = false; }
+    rerenderPropertyPreservingScroll(property.id);
+  });
+  if (!sendPanel.open) return;
+
+  const cands = sendCandidates(template, values);
+  const all = cands.flatMap((c) => c.fields);
+  const textEl = app.querySelector('#send-text');
+  const nameEl = app.querySelector('#send-name');
+  const statusEl = app.querySelector('#send-status');
+  const rebuildBtn = app.querySelector('#send-rebuild');
+  const subject = `Questions about ${property.address}`;
+
+  const updateLinks = () => {
+    const text = encodeURIComponent(textEl.value);
+    app.querySelector('#send-wa').href = `https://wa.me/?text=${text}`;
+    app.querySelector('#send-sms').href = `sms:?&body=${text}`;
+    app.querySelector('#send-mail').href = `mailto:?subject=${encodeURIComponent(subject)}&body=${text}`;
+  };
+  const rebuild = () => {
+    sendPanel.text = buildMessage(property, cands, sendPanel.selected, sendPanel.name);
+    textEl.value = sendPanel.text;
+    sendPanel.edited = false;
+    rebuildBtn.hidden = true;
+    updateLinks();
+  };
+  const refresh = () => { if (!sendPanel.edited) rebuild(); };
+
+  app.querySelector('#send-close').addEventListener('click', () => {
+    sendPanel.open = false;
+    rerenderPropertyPreservingScroll(property.id);
+  });
+
+  nameEl.addEventListener('input', () => { sendPanel.name = nameEl.value.trim(); refresh(); });
+
+  app.querySelectorAll('[data-send-field]').forEach((box) => {
+    box.addEventListener('change', () => {
+      const id = Number(box.dataset.sendField);
+      if (box.checked) sendPanel.selected.add(id); else sendPanel.selected.delete(id);
+      refresh();
+    });
+  });
+
+  const setSelection = (ids) => {
+    sendPanel.selected = new Set(ids);
+    app.querySelectorAll('[data-send-field]').forEach((box) => { box.checked = sendPanel.selected.has(Number(box.dataset.sendField)); });
+    rebuild(); // choosing a preset always rebuilds the message
+  };
+  const onlyMissing = app.querySelector('#send-important');
+  if (onlyMissing) {
+    onlyMissing.addEventListener('click', () => setSelection(all.filter((f) => f.important).map((f) => f.id)));
+    app.querySelector('#send-all').addEventListener('click', () => setSelection(all.map((f) => f.id)));
+    app.querySelector('#send-none').addEventListener('click', () => setSelection([]));
+  }
+
+  textEl.addEventListener('input', () => {
+    sendPanel.text = textEl.value;
+    sendPanel.edited = true;
+    rebuildBtn.hidden = false;
+    updateLinks();
+  });
+  rebuildBtn.addEventListener('click', rebuild);
+
+  const shareBtn = app.querySelector('#send-share');
+  if (navigator.share) {
+    shareBtn.hidden = false;
+    shareBtn.addEventListener('click', () => {
+      navigator.share({ title: subject, text: textEl.value }).catch(() => {});
+    });
+  }
+
+  app.querySelector('#send-copy').addEventListener('click', () => {
+    const done = () => { statusEl.textContent = 'Copied. Paste it into any chat.'; };
+    const fallback = () => { textEl.focus(); textEl.select(); statusEl.textContent = 'Text selected. Press Ctrl+C (or Copy) to copy it.'; };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(textEl.value).then(done, fallback);
+    else fallback();
+  });
+
+  updateLinks();
+}
 
 function valueByKey(template, values, key) {
   for (const cat of template) {
@@ -363,6 +543,7 @@ async function renderPropertyPage(id) {
     addFieldFor = null;
     editingFieldId = null;
     addCategoryOpen = false;
+    sendPanel = { open: false, name: '', selected: null, text: '', edited: false };
   }
 
   let data;
@@ -428,6 +609,7 @@ async function renderPropertyPage(id) {
           </div>
         </div>
         <div class="property-controls">
+          <button type="button" class="send-btn" id="send-toggle" aria-expanded="${sendPanel.open}">Send questions</button>
           <select class="status-select" id="status-select" aria-label="Listing status">${statusOptions}</select>
           <button class="archive-btn" id="archive-btn">${property.archived ? 'Unarchive' : 'Archive'}</button>
           <button class="delete-btn" id="delete-btn" aria-label="Delete property">Delete</button>
@@ -435,6 +617,8 @@ async function renderPropertyPage(id) {
       </div>
 
       ${summaryStrip(property, template, values)}
+
+      ${renderSendPanel(property, template, values)}
 
       <nav class="jump" aria-label="Jump to section">
         ${jumpChips.map(([target, label], i) => `<button type="button" class="jump-chip ${i === 0 ? 'active' : ''}" data-jump="${target}">${escapeHtml(label)}</button>`).join('')}
@@ -540,6 +724,7 @@ async function renderPropertyPage(id) {
     });
   });
 
+  wireSendPanel(property, template, values);
   wireContacts(property.id);
   wireNotes(property.id);
   wireDocumentDeletes(property.id);
