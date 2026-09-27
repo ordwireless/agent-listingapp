@@ -1394,3 +1394,8 @@ async function uploadDocument(propertyId) {
     statusEl.className = 'upload-status text-red';
   }
 }
+
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}); });
+}

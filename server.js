@@ -161,6 +161,11 @@ app.post('/login', express.urlencoded({ extended: false }), (req, res) => {
   res.redirect('/');
 });
 
+// Install files (manifest, icons, service worker) are public: the phone fetches them without the login cookie.
+app.use(express.static(path.join(__dirname, 'pwa'), {
+  setHeaders: (res, file) => { if (file.endsWith('sw.js') || file.endsWith('.webmanifest')) res.set('Cache-Control', 'no-cache'); }
+}));
+
 // The gate. In production a missing APP_PASSWORD locks the app instead of opening it.
 app.use((req, res, next) => {
   if (!process.env.APP_PASSWORD) {
