@@ -232,16 +232,26 @@ function runOnce(name, work) {
   db.prepare('INSERT INTO migrations (name) VALUES (?)').run(name);
 }
 
-runOnce('add_rooms_field', () => {
-  const structure = db.prepare("SELECT id FROM categories WHERE key = 'structure'").get();
-  if (!structure) return;
-  if (db.prepare("SELECT 1 FROM fields WHERE category_id = ? AND key = 'rooms'").get(structure.id)) return;
-  const after = db.prepare("SELECT sort_order FROM fields WHERE category_id = ? AND key = 'beds_baths'").get(structure.id);
-  const position = after ? after.sort_order + 1 : 99;
-  db.prepare('UPDATE fields SET sort_order = sort_order + 1 WHERE category_id = ? AND sort_order >= ?').run(structure.id, position);
+// Adds a shared field to a category, placed after the first of `afterKeys` that exists (or at the end).
+function addSharedField(categoryKey, afterKeys, key, label) {
+  const category = db.prepare('SELECT id FROM categories WHERE key = ?').get(categoryKey);
+  if (!category) return;
+  if (db.prepare('SELECT 1 FROM fields WHERE category_id = ? AND key = ?').get(category.id, key)) return;
+  let position = null;
+  for (const afterKey of afterKeys) {
+    const row = db.prepare('SELECT sort_order FROM fields WHERE category_id = ? AND key = ?').get(category.id, afterKey);
+    if (row) { position = row.sort_order + 1; break; }
+  }
+  if (position === null) {
+    position = db.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM fields WHERE category_id = ?').get(category.id).n;
+  }
+  db.prepare('UPDATE fields SET sort_order = sort_order + 1 WHERE category_id = ? AND sort_order >= ?').run(category.id, position);
   db.prepare('INSERT INTO fields (category_id, key, label, field_type, important, sort_order) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(structure.id, 'rooms', 'Rooms', 'text', 0, position);
-});
+    .run(category.id, key, label, 'text', 0, position);
+}
+
+runOnce('add_rooms_field', () => addSharedField('structure', ['beds_baths'], 'rooms', 'Rooms'));
+runOnce('add_bathrooms_field', () => addSharedField('structure', ['rooms', 'beds_baths'], 'bathrooms', 'Bathrooms'));
 
 module.exports = db;
 module.exports.uploadsDir = uploadsDir;

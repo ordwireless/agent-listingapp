@@ -323,6 +323,7 @@ const QUESTION_TEXT = {
   sqft: 'Square footage?',
   beds_baths: 'Bedrooms and bathrooms?',
   rooms: 'How many rooms in total (including bedrooms)?',
+  bathrooms: 'How many bathrooms (full and half)?',
   major_updates: 'Major updates or renovations (what and when)?'
 };
 
