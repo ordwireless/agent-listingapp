@@ -226,6 +226,8 @@ if (categoryCount === 0) {
 // remove is not put back on the next start.
 db.exec('CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY)');
 
+const migrationErrors = []; // shown on the signed-in /api/system page
+
 // Runs atomically. A failing migration is logged and skipped (tried again next start) instead of stopping the app.
 function runOnce(name, work) {
   if (db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(name)) return;
@@ -236,8 +238,19 @@ function runOnce(name, work) {
     db.exec('COMMIT');
   } catch (err) {
     db.exec('ROLLBACK');
+    migrationErrors.push({ name, error: String(err && err.message ? err.message : err) });
     console.error(`Migration "${name}" failed and was rolled back:`, err);
   }
+}
+
+function freeFieldKey(categoryId, base) {
+  let key = base;
+  let n = 2;
+  while (db.prepare('SELECT 1 FROM fields WHERE category_id = ? AND key = ?').get(categoryId, key)) {
+    key = `${base}_${n}`;
+    n += 1;
+  }
+  return key;
 }
 
 // Adds a shared field to a category, placed after the first of `afterKeys` that exists (or at the end).
@@ -272,8 +285,9 @@ runOnce('split_beds_baths', () => {
   addSharedField('structure', ['beds_baths'], 'bathrooms', 'Bathrooms'); // no-op when it already exists
   const bathrooms = db.prepare("SELECT id FROM fields WHERE category_id = ? AND key = 'bathrooms'").get(category.id);
 
-  db.prepare("UPDATE fields SET key = 'bedrooms', label = ? WHERE id = ?")
-    .run(combined.label === 'Beds / baths' ? 'Bedrooms' : combined.label, combined.id);
+  // If someone already made their own "Bedrooms" field, this one gets a free key instead of clashing with it.
+  db.prepare('UPDATE fields SET key = ?, label = ? WHERE id = ?')
+    .run(freeFieldKey(category.id, 'bedrooms'), combined.label === 'Beds / baths' ? 'Bedrooms' : combined.label, combined.id);
   db.prepare('UPDATE fields SET important = 1 WHERE id = ?').run(bathrooms.id); // the combined field was important
 
   const rows = db.prepare(
@@ -295,3 +309,4 @@ runOnce('split_beds_baths', () => {
 
 module.exports = db;
 module.exports.uploadsDir = uploadsDir;
+module.exports.migrationErrors = migrationErrors;

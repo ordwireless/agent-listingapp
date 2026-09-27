@@ -691,6 +691,19 @@ app.delete('/api/notes/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// Signed-in status page: which version runs, which one-time updates were applied (or failed), and the Structure fields.
+app.get('/api/system', (req, res) => {
+  const structure = db.prepare("SELECT id FROM categories WHERE key = 'structure'").get();
+  res.json({
+    version: process.env.RAILWAY_GIT_COMMIT_SHA || 'local',
+    migrations: db.prepare('SELECT name FROM migrations').all().map((r) => r.name),
+    migrationErrors: db.migrationErrors,
+    structureFields: structure
+      ? db.prepare('SELECT key, label, important, property_id FROM fields WHERE category_id = ? ORDER BY sort_order').all(structure.id)
+      : []
+  });
+});
+
 app.use('/api', (req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
