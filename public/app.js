@@ -321,6 +321,7 @@ const QUESTION_TEXT = {
   flood_zone: 'Is the property in a flood zone?',
   year_built: 'Year built?',
   sqft: 'Square footage?',
+  bedrooms: 'How many bedrooms?',
   beds_baths: 'Bedrooms and bathrooms?',
   rooms: 'How many rooms in total (including bedrooms)?',
   bathrooms: 'How many bathrooms (full and half)?',

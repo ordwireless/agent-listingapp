@@ -226,10 +226,18 @@ if (categoryCount === 0) {
 // remove is not put back on the next start.
 db.exec('CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY)');
 
+// Runs atomically. A failing migration is logged and skipped (tried again next start) instead of stopping the app.
 function runOnce(name, work) {
   if (db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(name)) return;
-  work();
-  db.prepare('INSERT INTO migrations (name) VALUES (?)').run(name);
+  db.exec('BEGIN');
+  try {
+    work();
+    db.prepare('INSERT INTO migrations (name) VALUES (?)').run(name);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    console.error(`Migration "${name}" failed and was rolled back:`, err);
+  }
 }
 
 // Adds a shared field to a category, placed after the first of `afterKeys` that exists (or at the end).
@@ -252,6 +260,38 @@ function addSharedField(categoryKey, afterKeys, key, label) {
 
 runOnce('add_rooms_field', () => addSharedField('structure', ['beds_baths'], 'rooms', 'Rooms'));
 runOnce('add_bathrooms_field', () => addSharedField('structure', ['rooms', 'beds_baths'], 'bathrooms', 'Bathrooms'));
+
+// "Beds / baths" becomes two separate fields. Values like "4 / 3" are split into Bedrooms = 4 and
+// Bathrooms = 3; anything else stays in Bedrooms as it was typed, for you to fix by hand.
+runOnce('split_beds_baths', () => {
+  const category = db.prepare("SELECT id FROM categories WHERE key = 'structure'").get();
+  if (!category) return;
+  const combined = db.prepare("SELECT id, label FROM fields WHERE category_id = ? AND key = 'beds_baths'").get(category.id);
+  if (!combined) return; // already removed or renamed by hand
+
+  addSharedField('structure', ['beds_baths'], 'bathrooms', 'Bathrooms'); // no-op when it already exists
+  const bathrooms = db.prepare("SELECT id FROM fields WHERE category_id = ? AND key = 'bathrooms'").get(category.id);
+
+  db.prepare("UPDATE fields SET key = 'bedrooms', label = ? WHERE id = ?")
+    .run(combined.label === 'Beds / baths' ? 'Bedrooms' : combined.label, combined.id);
+  db.prepare('UPDATE fields SET important = 1 WHERE id = ?').run(bathrooms.id); // the combined field was important
+
+  const rows = db.prepare(
+    "SELECT property_id, value FROM property_field_values WHERE field_id = ? AND TRIM(COALESCE(value, '')) <> ''"
+  ).all(combined.id);
+  const setValue = db.prepare(
+    `INSERT INTO property_field_values (property_id, field_id, value) VALUES (?, ?, ?)
+     ON CONFLICT(property_id, field_id) DO UPDATE SET value = excluded.value`
+  );
+  const bathroomValue = db.prepare('SELECT value FROM property_field_values WHERE property_id = ? AND field_id = ?');
+  rows.forEach((row) => {
+    const match = row.value.match(/^\s*(\d+(?:\.\d+)?)\s*[/,\-x&]\s*(\d+(?:\.\d+)?)\s*$/i);
+    if (!match) return;
+    setValue.run(row.property_id, combined.id, match[1]);
+    const existing = bathroomValue.get(row.property_id, bathrooms.id);
+    if (!existing || !String(existing.value || '').trim()) setValue.run(row.property_id, bathrooms.id, match[2]);
+  });
+});
 
 module.exports = db;
 module.exports.uploadsDir = uploadsDir;
