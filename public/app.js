@@ -322,6 +322,7 @@ const QUESTION_TEXT = {
   year_built: 'Year built?',
   sqft: 'Square footage?',
   beds_baths: 'Bedrooms and bathrooms?',
+  rooms: 'How many rooms in total (including bedrooms)?',
   major_updates: 'Major updates or renovations (what and when)?'
 };
 

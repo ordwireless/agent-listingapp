@@ -222,5 +222,26 @@ if (categoryCount === 0) {
   });
 }
 
+// One-time additions to the master checklist. Each runs once and is recorded, so a field you later
+// remove is not put back on the next start.
+db.exec('CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY)');
+
+function runOnce(name, work) {
+  if (db.prepare('SELECT 1 FROM migrations WHERE name = ?').get(name)) return;
+  work();
+  db.prepare('INSERT INTO migrations (name) VALUES (?)').run(name);
+}
+
+runOnce('add_rooms_field', () => {
+  const structure = db.prepare("SELECT id FROM categories WHERE key = 'structure'").get();
+  if (!structure) return;
+  if (db.prepare("SELECT 1 FROM fields WHERE category_id = ? AND key = 'rooms'").get(structure.id)) return;
+  const after = db.prepare("SELECT sort_order FROM fields WHERE category_id = ? AND key = 'beds_baths'").get(structure.id);
+  const position = after ? after.sort_order + 1 : 99;
+  db.prepare('UPDATE fields SET sort_order = sort_order + 1 WHERE category_id = ? AND sort_order >= ?').run(structure.id, position);
+  db.prepare('INSERT INTO fields (category_id, key, label, field_type, important, sort_order) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(structure.id, 'rooms', 'Rooms', 'text', 0, position);
+});
+
 module.exports = db;
 module.exports.uploadsDir = uploadsDir;
