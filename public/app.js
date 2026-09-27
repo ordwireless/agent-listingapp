@@ -301,7 +301,7 @@ let expandedNotes = {};
 let addFieldFor = null; // category id whose "add field" form is open
 let editingFieldId = null; // field id whose editor is open
 let addCategoryOpen = false;
-let sendPanel = { open: false, name: '', selected: null, text: '', edited: false, includeAnswered: false };
+let sendPanel = { open: false, name: '', selected: null, text: '', edited: false };
 
 // ---------- Send questions (to a contractor, the seller, anyone who knows the house) ----------
 
@@ -332,12 +332,12 @@ function questionFor(field) {
 
 // Fields that make sense to ask about: the empty ones, plus the answered ones when asked to include them.
 // Dates, the price and the old contacts category are left out.
-function sendCandidates(template, values, includeAnswered) {
+function sendCandidates(template) {
   return template
     .filter((c) => c.key !== 'contacts')
     .map((c) => ({
       title: c.title,
-      fields: c.fields.filter((f) => f.field_type !== 'date' && f.key !== 'price' && (includeAnswered || !values[f.id]))
+      fields: c.fields.filter((f) => f.field_type !== 'date' && f.key !== 'price')
     }))
     .filter((c) => c.fields.length > 0);
 }
@@ -356,7 +356,7 @@ function buildMessage(property, cands, selectedIds, name, values) {
 
 function renderSendPanel(property, template, values) {
   if (!sendPanel.open) return '';
-  const cands = sendCandidates(template, values, sendPanel.includeAnswered);
+  const cands = sendCandidates(template);
   const all = cands.flatMap((c) => c.fields);
   if (!sendPanel.selected) sendPanel.selected = new Set(all.filter((f) => f.important && !values[f.id]).map((f) => f.id));
   const valid = new Set(all.map((f) => f.id));
@@ -387,7 +387,6 @@ function renderSendPanel(property, template, values) {
       </div>
       <p class="send-help">Pick what you want answered. The message updates as you choose, and you can edit it before sending.</p>
       <input id="send-name" type="text" placeholder="Their first name (optional)" value="${escapeHtml(sendPanel.name)}" aria-label="Their first name">
-      <label class="check send-include"><input type="checkbox" id="send-include" ${sendPanel.includeAnswered ? 'checked' : ''}> Also ask about fields I have already filled (to double-check them)</label>
       ${all.length === 0 ? '<p class="empty" style="padding:8px 0">Every field already has an answer, so there is nothing left to ask.</p>' : `
         <div class="send-quick">
           <button type="button" class="link-btn" id="send-important">Only missing</button>
@@ -431,7 +430,7 @@ function wireSendPanel(property, template, values) {
 function wireSendPanelBody(property, template, values, mount) {
   if (!sendPanel.open) return;
 
-  const cands = sendCandidates(template, values, sendPanel.includeAnswered);
+  const cands = sendCandidates(template);
   const all = cands.flatMap((c) => c.fields);
   const textEl = app.querySelector('#send-text');
   const nameEl = app.querySelector('#send-name');
@@ -461,12 +460,6 @@ function wireSendPanelBody(property, template, values, mount) {
 
   nameEl.addEventListener('input', () => { sendPanel.name = nameEl.value.trim(); refresh(); });
 
-  app.querySelector('#send-include').addEventListener('change', (e) => {
-    sendPanel.includeAnswered = e.target.checked;
-    sendPanel.selected = null; // start again from the missing ones
-    sendPanel.edited = false;
-    mount();
-  });
 
   app.querySelectorAll('[data-send-field]').forEach((box) => {
     box.addEventListener('change', () => {
@@ -575,7 +568,7 @@ async function renderPropertyPage(id) {
     addFieldFor = null;
     editingFieldId = null;
     addCategoryOpen = false;
-    sendPanel = { open: false, name: '', selected: null, text: '', edited: false, includeAnswered: false };
+    sendPanel = { open: false, name: '', selected: null, text: '', edited: false };
   }
 
   let data;
