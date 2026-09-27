@@ -271,7 +271,15 @@ function addSharedField(categoryKey, afterKeys, key, label) {
     .run(category.id, key, label, 'text', 0, position);
 }
 
-runOnce('add_rooms_field', () => addSharedField('structure', ['beds_baths'], 'rooms', 'Rooms'));
+// A combined "Rooms" field was added and then dropped again: Bedrooms and Bathrooms cover it.
+runOnce('remove_rooms_field', () => {
+  const category = db.prepare("SELECT id FROM categories WHERE key = 'structure'").get();
+  if (!category) return;
+  const field = db.prepare("SELECT id FROM fields WHERE category_id = ? AND key = 'rooms' AND property_id IS NULL").get(category.id);
+  if (!field) return;
+  db.prepare('DELETE FROM property_field_values WHERE field_id = ?').run(field.id);
+  db.prepare('DELETE FROM fields WHERE id = ?').run(field.id);
+});
 runOnce('add_bathrooms_field', () => addSharedField('structure', ['rooms', 'beds_baths'], 'bathrooms', 'Bathrooms'));
 
 // "Beds / baths" becomes two separate fields. Values like "4 / 3" are split into Bedrooms = 4 and

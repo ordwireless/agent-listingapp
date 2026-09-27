@@ -498,6 +498,8 @@ select.status-select {
 }
 
 .send-item input { width: 17px; height: 17px; accent-color: var(--navy); flex-shrink: 0; }
+.send-have { font-size: 10.5px; font-weight: 700; color: var(--green, #15803d); background: #e3f4e8; border-radius: 6px; padding: 0 7px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.send-include { margin: 8px 0 4px; font-size: 13px; }
 .send-imp { font-size: 10.5px; font-weight: 800; color: var(--red); background: var(--red-bg); border-radius: 6px; padding: 0 7px; }
 
 .send-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
