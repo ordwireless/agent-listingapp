@@ -391,9 +391,12 @@ button.appbar-title:hover { background: rgba(255, 255, 255, 0.08); }
 
 .property-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
+
+.property-controls .send-btn { white-space: nowrap; }
 
 select.status-select {
   font: inherit;
@@ -452,6 +455,7 @@ select.status-select {
 /* Send questions panel */
 
 .send-panel {
+  scroll-margin-top: 76px;
   background: var(--card);
   border-radius: 18px;
   padding: 16px 18px 14px;

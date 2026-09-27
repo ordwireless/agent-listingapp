@@ -398,12 +398,26 @@ function renderSendPanel(property, template, values) {
   `;
 }
 
+// Opening and closing only redraws the panel itself (no reload of the page), so it responds instantly.
 function wireSendPanel(property, template, values) {
-  app.querySelector('#send-toggle').addEventListener('click', () => {
+  const toggle = app.querySelector('#send-toggle');
+  const slot = app.querySelector('#send-slot');
+  const mount = () => {
+    slot.innerHTML = renderSendPanel(property, template, values);
+    toggle.setAttribute('aria-expanded', String(sendPanel.open));
+    wireSendPanelBody(property, template, values, mount);
+  };
+  toggle.addEventListener('click', () => {
     sendPanel.open = !sendPanel.open;
     if (sendPanel.open) { sendPanel.selected = null; sendPanel.edited = false; }
-    rerenderPropertyPreservingScroll(property.id);
+    mount();
+    const panel = document.getElementById('send-panel');
+    if (sendPanel.open && panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+  wireSendPanelBody(property, template, values, mount);
+}
+
+function wireSendPanelBody(property, template, values, mount) {
   if (!sendPanel.open) return;
 
   const cands = sendCandidates(template, values);
@@ -431,7 +445,7 @@ function wireSendPanel(property, template, values) {
 
   app.querySelector('#send-close').addEventListener('click', () => {
     sendPanel.open = false;
-    rerenderPropertyPreservingScroll(property.id);
+    mount();
   });
 
   nameEl.addEventListener('input', () => { sendPanel.name = nameEl.value.trim(); refresh(); });
@@ -618,7 +632,7 @@ async function renderPropertyPage(id) {
 
       ${summaryStrip(property, template, values)}
 
-      ${renderSendPanel(property, template, values)}
+      <div id="send-slot">${renderSendPanel(property, template, values)}</div>
 
       <nav class="jump" aria-label="Jump to section">
         ${jumpChips.map(([target, label], i) => `<button type="button" class="jump-chip ${i === 0 ? 'active' : ''}" data-jump="${target}">${escapeHtml(label)}</button>`).join('')}
