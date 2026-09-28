@@ -1,5 +1,11 @@
 const app = document.getElementById('app');
 
+// The browser's own "restore scroll position on back/forward" would jump the page to wherever it
+// was when the property page was first opened (usually the top), fighting the scroll restoring
+// this app already does itself after every render. Turning it off leaves scroll exactly where it
+// was until our own code moves it.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
 // Every screen draw takes a ticket; a slow response from an older draw is dropped instead of painting over a newer screen.
 let renderToken = 0;
 
