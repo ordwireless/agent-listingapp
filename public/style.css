@@ -1056,17 +1056,34 @@ select.status-select {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+  padding: 12px 0;
+}
+
+.note-title, .note-toggle {
   background: none;
   border: none;
-  padding: 12px 0;
-  cursor: pointer;
   font: inherit;
   text-align: left;
   color: var(--ink);
+  cursor: pointer;
+  padding: 4px 0;
 }
 
-.note-title { font-weight: 800; font-size: 14px; }
-.note-toggle { font-size: 11.5px; font-weight: 700; color: var(--muted); }
+.note-title { font-weight: 800; font-size: 14px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-toggle { font-size: 11.5px; font-weight: 700; color: var(--muted); flex-shrink: 0; }
+
+.note-title-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-weight: 800;
+  font-size: 14px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #faf8f3;
+  color: var(--ink);
+}
 
 .note-body textarea {
   width: 100%;

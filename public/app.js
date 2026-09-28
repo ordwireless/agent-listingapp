@@ -305,6 +305,7 @@ const expandedLongFields = {};
 let uiPropertyId = null;
 let contactFormId = null; // 'new' | contact id | null
 let expandedNotes = {};
+let renameNoteAfterRender = null; // id of a just-created note whose title should open for editing right away
 let addFieldFor = null; // category id whose "add field" form is open
 let editingFieldId = null; // field id whose editor is open
 let addCategoryOpen = false;
@@ -956,15 +957,14 @@ function renderNotesSection(notes) {
       const open = !!expandedNotes[n.id];
       return `
         <div class="note-card">
-          <button type="button" class="note-head" data-note-toggle="${n.id}" aria-expanded="${open}">
-            <span class="note-title">${escapeHtml(n.title)}</span>
-            <span class="note-toggle">${open ? 'Close' : 'Open'}</span>
-          </button>
+          <div class="note-head">
+            <button type="button" class="note-title" data-note-title="${n.id}" data-raw-value="${escapeHtml(n.title)}" title="Click to rename">${escapeHtml(n.title)}</button>
+            <button type="button" class="note-toggle" data-note-toggle="${n.id}" aria-expanded="${open}">${open ? 'Close' : 'Open'}</button>
+          </div>
           ${open ? `
             <div class="note-body">
               <textarea class="autogrow" data-note-body="${n.id}" placeholder="Write here…">${escapeHtml(n.body)}</textarea>
               <div class="note-actions">
-                <button type="button" class="link-btn" data-note-rename="${n.id}" data-note-title="${escapeHtml(n.title)}">Rename</button>
                 <button type="button" class="doc-delete-btn" data-note-delete="${n.id}">Delete</button>
               </div>
             </div>` : ''}
@@ -983,18 +983,19 @@ function renderNotesSection(notes) {
 
 function wireNotes(propertyId) {
   app.querySelector('#add-note-btn').addEventListener('click', async () => {
-    const title = window.prompt('Note title:');
-    if (!title || !title.trim()) return;
+    let note;
     try {
-      const note = await fetchJSON(`/api/properties/${propertyId}/notes`, {
+      note = await fetchJSON(`/api/properties/${propertyId}/notes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: title.trim(), body: '' })
+        body: JSON.stringify({ title: 'New note', body: '' })
       });
-      expandedNotes[note.id] = true;
     } catch (err) {
       window.alert('Could not add note: ' + err.message);
+      return;
     }
+    expandedNotes[note.id] = true;
+    renameNoteAfterRender = note.id; // start editing the title as soon as it's on screen
     rerenderPropertyPreservingScroll(propertyId);
   });
 
@@ -1021,21 +1022,12 @@ function wireNotes(propertyId) {
     });
   });
 
-  app.querySelectorAll('[data-note-rename]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const next = window.prompt('Rename this note:', btn.dataset.noteTitle || '');
-      if (!next || !next.trim()) return;
-      try {
-        await fetchJSON(`/api/notes/${btn.dataset.noteRename}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: next.trim() })
-        });
-      } catch (err) {
-        window.alert('Could not rename note: ' + err.message);
-      }
-      rerenderPropertyPreservingScroll(propertyId);
-    });
+  app.querySelectorAll('[data-note-title]').forEach((btn) => {
+    btn.addEventListener('click', () => startEditingNoteTitle(btn, propertyId));
+    if (renameNoteAfterRender && String(renameNoteAfterRender) === btn.dataset.noteTitle) {
+      renameNoteAfterRender = null;
+      startEditingNoteTitle(btn, propertyId, { selectAll: true });
+    }
   });
 
   app.querySelectorAll('[data-note-delete]').forEach((btn) => {
@@ -1044,6 +1036,40 @@ function wireNotes(propertyId) {
       await fetchJSON(`/api/notes/${btn.dataset.noteDelete}`, { method: 'DELETE' });
       rerenderPropertyPreservingScroll(propertyId);
     });
+  });
+}
+
+function startEditingNoteTitle(btn, propertyId, opts) {
+  const noteId = btn.dataset.noteTitle;
+  const rawValue = btn.dataset.rawValue || '';
+  const input = document.createElement('input');
+  input.className = 'note-title-input';
+  input.type = 'text';
+  input.value = rawValue;
+  btn.replaceWith(input);
+  input.focus();
+  if (opts && opts.selectAll) input.select();
+  syncBackGuard();
+
+  const commit = async () => {
+    const next = input.value.trim();
+    if (next && next !== rawValue) {
+      try {
+        await fetchJSON(`/api/notes/${noteId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: next })
+        });
+      } catch (err) {
+        window.alert('Could not rename note: ' + err.message);
+      }
+    }
+    rerenderPropertyPreservingScroll(propertyId);
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') input.blur();
+    if (e.key === 'Escape') { input.value = rawValue; input.blur(); }
   });
 }
 
