@@ -1081,6 +1081,14 @@ select.status-select {
   resize: vertical;
 }
 
+/* Auto-grow boxes size themselves to the text, so the drag handle and scrollbar are not needed. */
+.long-full textarea.autogrow,
+.note-body textarea.autogrow,
+.contact-form textarea.autogrow {
+  overflow: hidden;
+  resize: none;
+}
+
 .note-actions {
   display: flex;
   gap: 12px;

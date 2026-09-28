@@ -785,7 +785,7 @@ function renderContactForm(contact, roles) {
         <input name="phone" type="tel" placeholder="Phone" value="${escapeHtml(c.phone)}">
         <input name="email" type="email" placeholder="Email" value="${escapeHtml(c.email)}">
       </div>
-      <textarea name="notes" placeholder="Notes (optional)">${escapeHtml(c.notes)}</textarea>
+      <textarea class="autogrow" name="notes" placeholder="Notes (optional)">${escapeHtml(c.notes)}</textarea>
       <div class="form-actions">
         <button type="submit" class="upload-btn">Save</button>
         <button type="button" class="link-btn" data-cancel-contact>Cancel</button>
@@ -899,7 +899,7 @@ function renderNotesSection(notes) {
           </button>
           ${open ? `
             <div class="note-body">
-              <textarea data-note-body="${n.id}" placeholder="Write here…">${escapeHtml(n.body)}</textarea>
+              <textarea class="autogrow" data-note-body="${n.id}" placeholder="Write here…">${escapeHtml(n.body)}</textarea>
               <div class="note-actions">
                 <button type="button" class="link-btn" data-note-rename="${n.id}" data-note-title="${escapeHtml(n.title)}">Rename</button>
                 <button type="button" class="doc-delete-btn" data-note-delete="${n.id}">Delete</button>
@@ -1150,7 +1150,7 @@ function renderFieldRow(field, rawValue, ctx) {
         <button type="button" class="field-label-btn" data-long-toggle="${field.id}">${escapeHtml(field.label)}</button>
         <button type="button" class="field-value ${emptyClass}" data-field-id="${field.id}" data-field-type="text" data-raw-value="${escapeHtml(value)}">${preview}</button>
       </div>
-      ${isExpanded ? `<div class="long-full"><textarea data-field-id="${field.id}" data-field-type="long_text" placeholder="Full details…">${escapeHtml(value)}</textarea><button type="button" class="link-btn" data-edit-field="${field.id}">Edit field</button></div>` : ''}
+      ${isExpanded ? `<div class="long-full"><textarea class="autogrow" data-field-id="${field.id}" data-field-type="long_text" placeholder="Full details…">${escapeHtml(value)}</textarea><button type="button" class="link-btn" data-edit-field="${field.id}">Edit field</button></div>` : ''}
     </div>
   `;
 }
@@ -1286,11 +1286,41 @@ function wireTemplateEditing(propertyId) {
 
 function wireFieldEditing(propertyId) {
   app.querySelectorAll('.field-value').forEach((span) => {
-    span.addEventListener('click', () => startEditingField(span, propertyId));
+    span.addEventListener('click', () => {
+      // A long-text field's short preview opens the full growing box below it, instead of a
+      // one-line editor that would confirm and close as soon as you press Enter.
+      const longRow = span.closest('.long-row');
+      if (longRow) {
+        const fieldId = longRow.dataset.fieldId;
+        expandedLongFields[fieldId] = true;
+        rerenderPropertyPreservingScroll(propertyId).then(() => {
+          const ta = app.querySelector(`textarea[data-field-id="${fieldId}"]`);
+          if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+        });
+        return;
+      }
+      startEditingField(span, propertyId);
+    });
   });
 
   app.querySelectorAll('textarea[data-field-id]').forEach((textarea) => {
     textarea.addEventListener('blur', () => saveFieldValue(propertyId, textarea.dataset.fieldId, textarea.value));
+  });
+
+  wireAutoGrow();
+}
+
+// Grows a textarea to fit whatever is typed, so you can always see the whole thing without
+// scrolling inside the box.
+function autoGrowTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+
+function wireAutoGrow() {
+  app.querySelectorAll('textarea.autogrow').forEach((el) => {
+    autoGrowTextarea(el);
+    el.addEventListener('input', () => autoGrowTextarea(el));
   });
 }
 
