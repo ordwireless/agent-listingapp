@@ -145,6 +145,7 @@ window.addEventListener('hashchange', render);
 window.addEventListener('DOMContentLoaded', render);
 
 function render() {
+  backGuardActive = false; // a real navigation is happening - any dummy back-button entry is now stale
   const hash = window.location.hash;
   const match = hash.match(/^#\/property\/(\d+)/);
   if (match) {
@@ -303,6 +304,60 @@ let editingFieldId = null; // field id whose editor is open
 let addCategoryOpen = false;
 let sendPanel = { open: false, name: '', selected: null, text: '', edited: false };
 
+// ---------- Back button: while something is open for editing, "back" closes just that instead of
+// leaving the property page. Works by pushing one dummy history entry (same URL) whenever something
+// opens; the phone's back button then just pops that entry, which we intercept to close the editor.
+let backGuardActive = false;
+let suppressNextPopstate = false;
+
+function anyEditorOpen() {
+  const active = document.activeElement;
+  const typing = active && active !== document.body && app.contains(active)
+    && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName);
+  return typing
+    || Object.values(expandedLongFields).some(Boolean)
+    || Object.values(expandedNotes).some(Boolean)
+    || contactFormId !== null
+    || editingFieldId !== null
+    || addFieldFor !== null
+    || addCategoryOpen
+    || sendPanel.open;
+}
+
+// Call this after any state change that could open or close an editor.
+function syncBackGuard() {
+  const open = anyEditorOpen();
+  if (open && !backGuardActive) {
+    backGuardActive = true;
+    history.pushState({ appEditGuard: true }, '', location.href);
+  } else if (!open && backGuardActive) {
+    backGuardActive = false;
+    suppressNextPopstate = true;
+    history.back(); // consumes the dummy entry so it never has to be "clicked through" later
+  }
+}
+
+function closeAllEditors(propertyId) {
+  const active = document.activeElement;
+  if (active && app.contains(active) && typeof active.blur === 'function') active.blur(); // saves in-progress edits
+  Object.keys(expandedLongFields).forEach((k) => delete expandedLongFields[k]);
+  expandedNotes = {};
+  contactFormId = null;
+  editingFieldId = null;
+  addFieldFor = null;
+  addCategoryOpen = false;
+  sendPanel.open = false;
+  rerenderPropertyPreservingScroll(propertyId);
+}
+
+window.addEventListener('popstate', () => {
+  if (suppressNextPopstate) { suppressNextPopstate = false; return; }
+  if (!backGuardActive) return; // a real navigation (not our dummy entry) - let the browser handle it
+  backGuardActive = false;
+  const match = window.location.hash.match(/^#\/property\/(\d+)/);
+  if (match) closeAllEditors(Number(match[1]));
+});
+
 // ---------- Send questions (to a contractor, the seller, anyone who knows the house) ----------
 
 const QUESTION_TEXT = {
@@ -416,6 +471,7 @@ function wireSendPanel(property, template, values) {
     slot.innerHTML = renderSendPanel(property, template, values);
     toggle.setAttribute('aria-expanded', String(sendPanel.open));
     wireSendPanelBody(property, template, values, mount);
+    syncBackGuard();
   };
   toggle.addEventListener('click', () => {
     sendPanel.open = !sendPanel.open;
@@ -755,6 +811,7 @@ async function renderPropertyPage(id) {
   wireDocumentDeletes(property.id);
   wireCategoryToggles(property.id);
   wireFieldEditing(property.id);
+  syncBackGuard();
   return true;
 }
 
@@ -993,6 +1050,7 @@ function startEditingAddress(btn, propertyId) {
   btn.replaceWith(input);
   input.focus();
   input.select();
+  syncBackGuard();
 
   const commit = async () => {
     const next = input.value.trim();
@@ -1337,6 +1395,7 @@ function startEditingField(span, propertyId) {
   if (input.type === 'date' && typeof input.showPicker === 'function') {
     try { input.showPicker(); } catch (e) { /* not supported here, fall back to native tap */ }
   }
+  syncBackGuard();
 
   const commit = () => saveFieldValue(propertyId, fieldId, input.value);
   input.addEventListener('blur', commit);
