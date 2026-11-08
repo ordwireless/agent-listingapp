@@ -309,7 +309,7 @@ let renameNoteAfterRender = null; // id of a just-created note whose title shoul
 let addFieldFor = null; // category id whose "add field" form is open
 let editingFieldId = null; // field id whose editor is open
 let addCategoryOpen = false;
-let sendPanel = { open: false, name: '', selected: null, text: '', edited: false };
+let sendPanel = { open: false, name: '', selected: null, text: '', edited: false, modes: {} };
 
 // ---------- Back button: while something is open for editing, "back" closes just that instead of
 // leaving the property page. Works by pushing one dummy history entry (same URL) whenever something
@@ -367,29 +367,49 @@ window.addEventListener('popstate', () => {
 
 // ---------- Send questions (to a contractor, the seller, anyone who knows the house) ----------
 
+// Plain, one-line questions: easy to answer from a phone with a number and a few words.
 const QUESTION_TEXT = {
-  roof: 'Roof: year installed (or approximate age)?',
-  hvac_unit_1: 'HVAC unit 1: year installed (or approximate age) and type?',
-  hvac_unit_2: 'HVAC unit 2 (if there is one): year installed and type?',
-  water_heater: 'Water heater: year installed (or approximate age), gas or electric, tank size?',
-  fireplace: 'Fireplace: gas, wood or electric?',
-  foundation: 'Foundation: slab, crawl space or basement?',
-  construction: 'Construction type (brick, siding, stone…)?',
+  roof: 'How old is the roof? (about how many years, or the year it was replaced)',
+  hvac_unit_1: 'How old is the heating/AC, and is it electric or gas?',
+  hvac_unit_2: 'Is there a second AC or heating unit? If yes, how old is it?',
+  water_heater: 'How old is the water heater? Gas or electric?',
+  fireplace: 'Fireplace: gas, wood, or electric?',
+  foundation: 'Foundation: slab, crawl space, or basement?',
+  construction: 'What is the outside made of? (brick, siding, stone…)',
   water: 'Water: city or well?',
   sewer: 'Sewer: city or septic?',
-  gas: 'Gas: natural gas, propane or none?',
-  hoa: 'HOA: how much, and how often is it paid?',
-  restrictive_covenants: 'Any restrictive covenants?',
-  flood_zone: 'Is the property in a flood zone?',
-  year_built: 'Year built?',
-  sqft: 'Square footage?',
+  gas: 'Gas at the house: natural gas, propane, or none?',
+  hoa: 'Is there an HOA? If yes, how much and how often?',
+  restrictive_covenants: 'Any restrictive covenants or neighborhood rules?',
+  flood_zone: 'Is the house in a flood zone? (yes / no / not sure)',
+  year_built: 'What year was the house built?',
+  sqft: 'About how many square feet?',
   bedrooms: 'How many bedrooms?',
-  bathrooms: 'How many bathrooms (full and half)?',
-  major_updates: 'Major updates or renovations (what and when)?'
+  bathrooms: 'How many bathrooms? (full and half)',
+  major_updates: 'Any major updates or renovations? (what and when)'
 };
+
+// What to ask for when a field is asked as a photo instead of a question.
+const PHOTO_TEXT = {
+  roof: 'The roof (from the ground is fine)',
+  hvac_unit_1: 'The label on the heating/AC unit',
+  hvac_unit_2: 'The label on the second heating/AC unit',
+  water_heater: 'The label on the water heater',
+  fireplace: 'The fireplace'
+};
+// Fields that have a sticker with the year and type: a photo is easier than explaining.
+const PHOTO_BY_DEFAULT = new Set(['hvac_unit_1', 'hvac_unit_2', 'water_heater']);
 
 function questionFor(field) {
   return QUESTION_TEXT[field.key] || `${field.label}?`;
+}
+
+function photoFor(field) {
+  return PHOTO_TEXT[field.key] || `A photo of: ${field.label}`;
+}
+
+function sendModeOf(field) {
+  return sendPanel.modes[field.id] || (PHOTO_BY_DEFAULT.has(field.key) ? 'photo' : 'question');
 }
 
 // Fields that make sense to ask about: the empty ones, plus the answered ones when asked to include them.
@@ -404,23 +424,48 @@ function sendCandidates(template) {
     .filter((c) => c.fields.length > 0);
 }
 
+// Three parts: short questions, photo requests, and a "tell me only if wrong" line for what is already known.
 function buildMessage(property, cands, selectedIds, name, values) {
-  const lines = [];
+  const questions = [];
+  const photos = [];
+  const known = [];
   cands.forEach((c) => c.fields.forEach((f) => {
     if (!selectedIds.has(f.id)) return;
-    const have = String(values[f.id] || '').trim();
-    lines.push(have ? `${questionFor(f)} (I have it as: ${have.replace(/\s+/g, ' ')})` : questionFor(f));
+    const have = String(values[f.id] || '').trim().replace(/\s+/g, ' ');
+    if (have) known.push(`${f.label}: ${have}`);
+    else if (sendModeOf(f) === 'photo') photos.push(photoFor(f));
+    else questions.push(questionFor(f));
   }));
-  if (lines.length === 0) return '';
-  const greeting = name ? `Hi ${name},` : 'Hi,';
-  return `${greeting}\nI'm getting ${property.address} ready to list. Could you tell me:\n\n${lines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\n\nThank you!`;
+  if (questions.length + photos.length + known.length === 0) return '';
+
+  const greeting = name ? `Hi ${name}!` : 'Hi!';
+  let n = 0;
+  const numbered = (items) => items.map((t) => `${++n}. ${t}`).join('\n');
+  const parts = [];
+  if (questions.length) {
+    parts.push(`${greeting} Quick questions about ${property.address}. Just reply with the number and your answer:\n\n${numbered(questions)}`);
+    if (photos.length) parts.push(`Could you also send photos of:\n${numbered(photos)}`);
+  } else if (photos.length) {
+    parts.push(`${greeting} To finish the listing for ${property.address}, could you send me a few photos?\n\n${numbered(photos)}`);
+  } else {
+    parts.push(`${greeting} Quick check on ${property.address}.`);
+  }
+  if (known.length) parts.push(`Already have these. Tell me only if something is wrong:\n${known.join('\n')}`);
+  parts.push('Thank you!');
+  return parts.join('\n\n');
 }
 
 function renderSendPanel(property, template, values) {
   if (!sendPanel.open) return '';
   const cands = sendCandidates(template);
   const all = cands.flatMap((c) => c.fields);
-  if (!sendPanel.selected) sendPanel.selected = new Set(all.filter((f) => f.important && !values[f.id]).map((f) => f.id));
+  // Start with what is missing, plus short known values (they become the "tell me only if wrong" line).
+  if (!sendPanel.selected) {
+    sendPanel.selected = new Set(all.filter((f) => {
+      const have = String(values[f.id] || '').trim();
+      return have ? have.length <= 30 : f.important;
+    }).map((f) => f.id));
+  }
   const valid = new Set(all.map((f) => f.id));
   sendPanel.selected = new Set([...sendPanel.selected].filter((id) => valid.has(id)));
   if (!sendPanel.edited) sendPanel.text = buildMessage(property, cands, sendPanel.selected, sendPanel.name, values);
@@ -433,11 +478,16 @@ function renderSendPanel(property, template, values) {
         const tag = have
           ? `<span class="send-have">${escapeHtml(have.length > 24 ? have.slice(0, 24) + '…' : have)}</span>`
           : (f.important ? '<span class="send-imp">Missing</span>' : '');
+        const photo = sendModeOf(f) === 'photo';
+        const modeBtn = have ? '' : `<button type="button" class="send-mode ${photo ? 'is-photo' : ''}" data-send-mode="${f.id}" aria-label="Ask ${escapeHtml(f.label)} as a ${photo ? 'photo' : 'question'}. Tap to switch.">${photo ? 'Photo' : 'Question'}</button>`;
         return `
-        <label class="send-item">
-          <input type="checkbox" data-send-field="${f.id}" ${sendPanel.selected.has(f.id) ? 'checked' : ''}>
-          <span>${escapeHtml(f.label)}</span>${tag}
-        </label>`;
+        <div class="send-row">
+          <label class="send-item">
+            <input type="checkbox" data-send-field="${f.id}" ${sendPanel.selected.has(f.id) ? 'checked' : ''}>
+            <span>${escapeHtml(f.label)}</span>${tag}
+          </label>
+          ${modeBtn}
+        </div>`;
       }).join('')}
     </div>`).join('');
 
@@ -447,7 +497,7 @@ function renderSendPanel(property, template, values) {
         <h2 class="send-title">Send questions</h2>
         <button type="button" class="link-btn" id="send-close">Close</button>
       </div>
-      <p class="send-help">Pick what you want answered. The message updates as you choose, and you can edit it before sending.</p>
+      <p class="send-help">Pick what you want answered. Missing items are asked as a question or a photo (tap the tag to switch). Items you already have go in a "tell me only if wrong" line. The message updates as you choose, and you can edit it before sending.</p>
       <input id="send-name" type="text" placeholder="Their first name (optional)" value="${escapeHtml(sendPanel.name)}" aria-label="Their first name">
       ${all.length === 0 ? '<p class="empty" style="padding:8px 0">Every field already has an answer, so there is nothing left to ask.</p>' : `
         <div class="send-quick">
@@ -528,6 +578,18 @@ function wireSendPanelBody(property, template, values, mount) {
     box.addEventListener('change', () => {
       const id = Number(box.dataset.sendField);
       if (box.checked) sendPanel.selected.add(id); else sendPanel.selected.delete(id);
+      refresh();
+    });
+  });
+
+  app.querySelectorAll('[data-send-mode]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const field = all.find((f) => f.id === Number(btn.dataset.sendMode));
+      if (!field) return;
+      const photo = sendModeOf(field) !== 'photo';
+      sendPanel.modes[field.id] = photo ? 'photo' : 'question';
+      btn.textContent = photo ? 'Photo' : 'Question';
+      btn.classList.toggle('is-photo', photo);
       refresh();
     });
   });
@@ -631,7 +693,7 @@ async function renderPropertyPage(id) {
     addFieldFor = null;
     editingFieldId = null;
     addCategoryOpen = false;
-    sendPanel = { open: false, name: '', selected: null, text: '', edited: false };
+    sendPanel = { open: false, name: '', selected: null, text: '', edited: false, modes: {} };
   }
 
   let data;
