@@ -51,7 +51,7 @@ function lineList(input) {
     .slice(0, MAX_LINES);
 }
 
-module.exports = function createMcp({ db, getTemplate, safeEqual }) {
+module.exports = function createMcp({ db, getTemplate, safeEqual, statuses, getContactRoles }) {
   const router = express.Router();
 
   // ----- data helpers -----
@@ -212,6 +212,55 @@ module.exports = function createMcp({ db, getTemplate, safeEqual }) {
           required: ['address', 'label', 'value']
         },
         annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+      },
+      {
+        name: 'add_contact',
+        title: 'Add a contact to a property',
+        description:
+          'Add a person or company to the Contacts section of an existing property (for example from an OTP or other contract: Buyer, Buyer Agent, Seller, Closing Attorney, Lender, HOA Contact, Contractor). ' +
+          'Include phone and email when the document has them; leave them out when it does not. Never invent details. ' +
+          'If the same role and name already exist, only empty phone/email are filled. Nothing is ever deleted or overwritten.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            address: { type: 'string' },
+            role: { type: 'string', description: 'One of: ' + getContactRoles().join(', ') },
+            name: { type: 'string' },
+            phone: { type: 'string' },
+            email: { type: 'string' },
+            notes: { type: 'string', description: 'Short extra detail, e.g. company or file number' }
+          },
+          required: ['address', 'role', 'name']
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+      },
+      {
+        name: 'save_note',
+        title: 'Add lines to a titled note on a property',
+        description:
+          'Add lines to a note with the given title on an existing property (created if missing). Lines already in the note are not repeated, and nothing is removed. ' +
+          'Use for contract facts that have no field, e.g. title "Contract summary": purchase price, earnest money, DD fee amount.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            address: { type: 'string' },
+            title: { type: 'string', description: 'Note title, e.g. "Contract summary"' },
+            lines: { type: 'array', items: { type: 'string' } }
+          },
+          required: ['address', 'title', 'lines']
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+      },
+      {
+        name: 'set_status',
+        title: 'Change the status of a property',
+        description: 'Set the property status (' + statuses.join(', ') + ') when a document shows it changed, e.g. "Under Contract" once there is a signed OTP. Tell David when you change it. The previous status is returned.',
+        inputSchema: {
+          type: 'object',
+          properties: { address: { type: 'string' }, status: { type: 'string', enum: statuses } },
+          required: ['address', 'status']
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
       }
     ];
   }
@@ -305,6 +354,57 @@ module.exports = function createMcp({ db, getTemplate, safeEqual }) {
     return { ok: true, label: field.label, previous: previous == null || previous === '' ? null : previous, now: value, link: propertyUrl(req, property.id), ...gaps(property) };
   }
 
+  function existingProperty(address) {
+    const found = findProperty(cleanValue(address));
+    if (found.error) throw new Error(found.error);
+    if (!found.property) throw new Error('No property with this address in the app. Call import_property first.');
+    return found.property;
+  }
+
+  function addContact(args, req) {
+    const property = existingProperty(args.address);
+    const name = cleanValue(args.name).slice(0, 200);
+    if (!name) throw new Error('name is required');
+    const roles = getContactRoles();
+    const role = roles.find((r) => norm(r) === norm(args.role)) || 'Other';
+    const phone = cleanValue(args.phone).slice(0, 40);
+    const email = cleanValue(args.email).slice(0, 200);
+    const notes = cleanValue(args.notes).slice(0, 500);
+
+    const existing = db.prepare('SELECT * FROM contacts WHERE property_id = ? AND lower(role) = lower(?) AND lower(name) = lower(?)').get(property.id, role, name);
+    let outcome;
+    if (existing) {
+      const filled = [];
+      if (phone && !String(existing.phone || '').trim()) { db.prepare('UPDATE contacts SET phone = ? WHERE id = ?').run(phone, existing.id); filled.push('phone'); }
+      if (email && !String(existing.email || '').trim()) { db.prepare('UPDATE contacts SET email = ? WHERE id = ?').run(email, existing.id); filled.push('email'); }
+      outcome = { already_existed: true, filled_now: filled };
+    } else {
+      db.prepare('INSERT INTO contacts (property_id, role, name, phone, email, notes) VALUES (?, ?, ?, ?, ?, ?)').run(property.id, role, name, phone, email, notes);
+      outcome = { already_existed: false };
+    }
+    touch(property.id);
+    const all = db.prepare('SELECT role, name, phone, email FROM contacts WHERE property_id = ? ORDER BY id').all(property.id);
+    return { ok: true, role, name, ...outcome, contacts_on_property: all.map((c) => ({ role: c.role, name: c.name, has_phone: !!c.phone, has_email: !!c.email })), link: propertyUrl(req, property.id) };
+  }
+
+  function saveNote(args, req) {
+    const property = existingProperty(args.address);
+    const title = cleanValue(args.title).slice(0, 100);
+    if (!title) throw new Error('title is required');
+    const lines = lineList(args.lines);
+    if (!lines.length) throw new Error('lines is empty');
+    const result = mergeNote(property.id, title, lines);
+    touch(property.id);
+    return { ok: true, ...result, link: propertyUrl(req, property.id) };
+  }
+
+  function setStatus(args, req) {
+    const property = existingProperty(args.address);
+    if (!statuses.includes(args.status)) throw new Error('Status must be one of: ' + statuses.join(', '));
+    db.prepare("UPDATE properties SET status = ?, updated_at = datetime('now') WHERE id = ?").run(args.status, property.id);
+    return { ok: true, previous: property.status, now: args.status, link: propertyUrl(req, property.id) };
+  }
+
   function callTool(name, args, req) {
     const a = args && typeof args === 'object' ? args : {};
     try {
@@ -312,6 +412,9 @@ module.exports = function createMcp({ db, getTemplate, safeEqual }) {
       if (name === 'import_property') out = importProperty(a, req);
       else if (name === 'get_missing') out = getMissing(a, req);
       else if (name === 'set_field') out = setField(a, req);
+      else if (name === 'add_contact') out = addContact(a, req);
+      else if (name === 'save_note') out = saveNote(a, req);
+      else if (name === 'set_status') out = setStatus(a, req);
       else return { content: [{ type: 'text', text: 'Unknown tool: ' + name }], isError: true };
       return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] };
     } catch (err) {
