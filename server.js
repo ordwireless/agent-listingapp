@@ -166,6 +166,12 @@ app.use(express.static(path.join(__dirname, 'pwa'), {
   setHeaders: (res, file) => { if (file.endsWith('sw.js') || file.endsWith('.webmanifest')) res.set('Cache-Control', 'no-cache'); }
 }));
 
+// Connector for the Cowork MLS agent. Public by design but protected by the secret in its own URL
+// (MCP_SECRET); it can only create a property and fill empty fields/notes. Disabled when MCP_SECRET is unset.
+app.use('/mcp', require('./mcp')({ db, getTemplate, safeEqual }));
+// Connector clients probe these standard paths first; answer "not here" instead of the login page.
+app.use('/.well-known', (req, res) => res.status(404).json({ error: 'Not found' }));
+
 // The gate. In production a missing APP_PASSWORD locks the app instead of opening it.
 app.use((req, res, next) => {
   if (!process.env.APP_PASSWORD) {
