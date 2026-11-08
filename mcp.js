@@ -180,8 +180,7 @@ module.exports = function createMcp({ db, getTemplate, safeEqual, statuses, getC
                 required: ['label', 'value']
               }
             },
-            open_items: { type: 'array', items: { type: 'string' }, description: 'Things still to confirm with seller/contractor. Saved as the note "Open items".' },
-            notes: { type: 'array', items: { type: 'string' }, description: 'Caveats worth remembering. Saved as the note "MLS notes".' }
+            open_items: { type: 'array', items: { type: 'string' }, description: 'ONLY facts that are missing in the app and still need to be found or confirmed (e.g. "Roof age - ask seller"). Not research caveats or general commentary. Saved as the note "Open items".' }
           },
           required: ['address', 'fields']
         },
@@ -311,8 +310,9 @@ module.exports = function createMcp({ db, getTemplate, safeEqual, statuses, getC
         result.filled.push(field.label);
       });
 
-      [mergeNote(property.id, 'Open items', lineList(args.open_items)), mergeNote(property.id, 'MLS notes', lineList(args.notes))]
-        .forEach((n) => { if (n) result.notes.push(n); });
+      // David's choice: no "MLS notes" note (the app is for quick answers); any `notes` argument is ignored.
+      const openNote = mergeNote(property.id, 'Open items', lineList(args.open_items));
+      if (openNote) result.notes.push(openNote);
 
       touch(property.id);
       db.exec('COMMIT');
